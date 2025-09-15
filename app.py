@@ -195,7 +195,7 @@ if uploaded_pdfs:
             pdf_results.append((custom_pdf_name, edited_pdf))
 
     # Download ZIP if all names are unique
-    if all_unique and st.button("📦 Download All Results (ZIP)"):
+    if all_unique and st.button("📦 Save"):
         zip_buffer = io.BytesIO()
 
         with zipfile.ZipFile(zip_buffer, "w") as zf:
