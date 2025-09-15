@@ -165,10 +165,11 @@ if uploaded_pdfs:
                 "width","height","location_input","remarks"
             ]]
 
-            edited_df = st.data_editor(
+                edited_df = st.data_editor(
                 df,
                 num_rows="fixed",
                 use_container_width=True,
+                hide_index=True,   # 👈 hides the index column
                 key=f"editor_{i}",
                 column_config={
                     "sales_line": st.column_config.TextColumn(disabled=True),
@@ -181,7 +182,8 @@ if uploaded_pdfs:
                     "height": st.column_config.NumberColumn("Height (input)", step=1),
                     "location_input": st.column_config.TextColumn("Location (input)"),
                     "remarks": st.column_config.TextColumn("Remarks")
-                }
+                                }
+            )
             )
 
             sheet_name = make_excel_safe_name(custom_pdf_name)
