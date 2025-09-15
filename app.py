@@ -1,5 +1,5 @@
 # ==========================
-# 📝 Raghvendra's PDF Editor
+# 📝 Raghvendra's PDF Editor (v26 - Add direct download buttons)
 # ==========================
 
 import streamlit as st
@@ -124,7 +124,7 @@ def make_excel_safe_name(name):
 
 
 # ----------------- Streamlit UI -----------------
-st.title("📝 WCS Editor")
+st.title("📝 Raghvendra's PDF Editor")
 
 uploaded_pdfs = st.file_uploader("Upload one or more Survey Sheet PDFs", type="pdf", accept_multiple_files=True)
 
@@ -169,7 +169,7 @@ if uploaded_pdfs:
                 df,
                 num_rows="fixed",
                 use_container_width=True,
-                hide_index=True,   # 👈 hides the confusing index column
+                hide_index=True,   # hide index
                 key=f"editor_{i}",
                 column_config={
                     "sales_line": st.column_config.TextColumn(disabled=True),
@@ -195,10 +195,11 @@ if uploaded_pdfs:
             )
             pdf_results.append((custom_pdf_name, edited_pdf))
 
-    # Download ZIP if all names are unique
-    if all_unique and st.button("💾 Save"):
-        zip_buffer = io.BytesIO()
+    # ========== DOWNLOAD SECTION ==========
 
+    # 1. ZIP download
+    if all_unique and st.button("📦 Download All Results (ZIP)"):
+        zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zf:
             # Excel with multiple sheets
             if per_file_data:
@@ -208,7 +209,6 @@ if uploaded_pdfs:
                         df_part.to_excel(writer, index=False, sheet_name=sheet_name)
                 excel_file.seek(0)
                 zf.writestr(f"{file_name_prefix}.xlsx", excel_file.getvalue())
-
             # PDFs
             for pdf_name, pdf_bytes in pdf_results:
                 zf.writestr(f"{pdf_name}.pdf", pdf_bytes)
@@ -216,11 +216,25 @@ if uploaded_pdfs:
         zip_buffer.seek(0)
         today_str = datetime.today().strftime("%Y-%m-%d")
         zip_name = f"{file_name_prefix}_{today_str}_all.zip"
-
         st.success("✅ ZIP file ready for download")
-        st.download_button(
-            "⬇️ Download All Files (ZIP)",
-            data=zip_buffer,
-            file_name=zip_name,
-            mime="application/zip"
-        )
+        st.download_button("⬇️ Download All Files (ZIP)",
+                           data=zip_buffer, file_name=zip_name, mime="application/zip")
+
+    # 2. Direct download section
+    if all_unique and per_file_data:
+        st.write("---")
+        st.subheader("📥 Direct Downloads (No ZIP)")
+
+        # Excel direct
+        excel_file = io.BytesIO()
+        with pd.ExcelWriter(excel_file, engine="openpyxl") as writer:
+            for sheet_name, df_part in per_file_data:
+                df_part.to_excel(writer, index=False, sheet_name=sheet_name)
+        excel_file.seek(0)
+        st.download_button("⬇️ Download Excel Only",
+                           data=excel_file, file_name=f"{file_name_prefix}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+        # PDFs direct
+        for pdf_name, pdf_bytes in pdf_results:
+            st.download_button(f"⬇️ Download {pdf_name}.pdf",
+                               data=pdf_bytes, file_name=f"{pdf_name}.pdf", mime="application/pdf")
