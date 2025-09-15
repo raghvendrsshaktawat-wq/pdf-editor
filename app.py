@@ -124,7 +124,7 @@ def make_excel_safe_name(name):
 
 
 # ----------------- Streamlit UI -----------------
-st.title("📝 Raghvendra's PDF Editor")
+st.title("📝 WCS Editor")
 
 uploaded_pdfs = st.file_uploader("Upload one or more Survey Sheet PDFs", type="pdf", accept_multiple_files=True)
 
