@@ -1,5 +1,5 @@
 # ==========================
-# 📝 Raghvendra's PDF Editor (v26 - Add direct download buttons)
+# 📝 WCS Editor (v26 - Add direct download buttons)
 # ==========================
 
 import streamlit as st
@@ -124,7 +124,7 @@ def make_excel_safe_name(name):
 
 
 # ----------------- Streamlit UI -----------------
-st.title("📝 Raghvendra's PDF Editor")
+st.title("📝 WCS Editor")
 
 uploaded_pdfs = st.file_uploader("Upload one or more Survey Sheet PDFs", type="pdf", accept_multiple_files=True)
 
@@ -198,7 +198,7 @@ if uploaded_pdfs:
     # ========== DOWNLOAD SECTION ==========
 
     # 1. ZIP download
-    if all_unique and st.button("📦 Download All Results (ZIP)"):
+    if all_unique and st.button("📦 Save"):
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zf:
             # Excel with multiple sheets
