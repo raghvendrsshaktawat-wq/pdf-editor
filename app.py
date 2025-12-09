@@ -1,5 +1,5 @@
 # ==========================
-# WCS Survey Editor (v40 - Times-Roman + Surveyor Name)
+# WCS Survey Editor (v41 - Times-Roman, 2nd Name, Fixed Aperture Text)
 # ==========================
 
 import streamlit as st
@@ -74,7 +74,7 @@ def get_fontname_for_page(page):
     Use built-in Times-Roman family (PyMuPDF alias 'tiro').
     This requires no external font files.
     """
-    return "tiro"  # Times-Roman family [web:63]
+    return "tiro"  # Times-Roman family
 
 def draw_text_with_white_bg(page, point, text, fontname, fontsize, color):
     """
@@ -108,29 +108,42 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
     spacing2 = 80
     font_size = 14
 
-    # First: write Surveyor Name into "Name" field (if present)
+    # Write Surveyor Name into SECOND "Name" field (if present)
     if surveyor_name:
         for page in doc:
             name_rects = page.search_for("Name")
-            if name_rects:
+            if len(name_rects) >= 2:
+                name_rect = name_rects[1]  # second Name
+            elif len(name_rects) == 1:
                 name_rect = name_rects[0]
-                fontname = get_fontname_for_page(page)
-                text_x = name_rect.x1 + 10
-                text_y = name_rect.y1 - 3
-                draw_text_with_white_bg(
-                    page,
-                    (text_x, text_y),
-                    surveyor_name,
-                    fontname=fontname,
-                    fontsize=11,
-                    color=(0, 0, 0),
-                )
-                break  # assume first occurrence is enough
+            else:
+                continue
 
+            fontname = get_fontname_for_page(page)
+            text_x = name_rect.x1 + 10
+            text_y = name_rect.y1 - 3
+
+            draw_text_with_white_bg(
+                page,
+                (text_x, text_y),
+                surveyor_name,
+                fontname=fontname,
+                fontsize=11,
+                color=(0, 0, 0),
+            )
+            break  # stop after first page where we wrote the name
+
+    # Find all "Aperture Size" anchors (case-insensitive, with/without space)
     aperture_positions = []
     for page_num, page in enumerate(doc):
-        for inst in page.search_for("Aperture Size"):
+        rects1 = page.search_for("Aperture Size")
+        rects2 = page.search_for("aperture size")
+        rects3 = page.search_for("ApertureSize")
+        for inst in rects1 + rects2 + rects3:
             aperture_positions.append((page_num, inst))
+
+    if not aperture_positions:
+        print("No 'Aperture Size' anchors found in PDF. Sizes will not be written.")
 
     for idx, entry in enumerate(entries):
         if idx >= len(aperture_positions):
@@ -151,7 +164,11 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
         if order_h is not None and input_h is not None and abs(order_h - input_h) > 75:
             color = (1, 0, 0)  # Red
 
-        size_text = f"{input_w:.0f} x {input_h:.0f}" if input_w and input_h else "N/A"
+        if input_w is not None and input_h is not None:
+            size_text = f"{input_w:.0f} x {input_h:.0f}"
+        else:
+            size_text = "N/A"
+
         location_text = f"({entry.get('location_input', '')})"
         remarks_text = entry.get("remarks", "")
 
