@@ -1,5 +1,5 @@
 # ==========================
-# 📝 WCS Editor (v38 - Sidebar Ref Summary)
+# WCS Survey Editor
 # ==========================
 
 import streamlit as st
@@ -10,11 +10,6 @@ import re
 import zipfile
 from datetime import datetime
 import numpy as np
-
-# Minimal color palette
-FENESTA_BLUE = "#1E3A8A"
-FENESTA_GRAY = "#F8FAFC"
-WHITE = "#FFFFFF"
 
 # Regex pattern
 pattern = re.compile(
@@ -100,7 +95,6 @@ def update_pdf(pdf_bytes, entries):
         input_w = safe_float_convert(entry.get("width"))
         input_h = safe_float_convert(entry.get("height"))
         
-        # Red/blue coloring logic in PDF
         color = (0, 0, 1)  # Blue
         if order_w is not None and input_w is not None and abs(order_w - input_w) > 75:
             color = (1, 0, 0)  # Red
@@ -150,35 +144,60 @@ def update_pdf(pdf_bytes, entries):
 def make_excel_safe_name(name):
     return "".join(c if c.isalnum() else "_" for c in name)[:31] or "Sheet"
 
-# ----------------- UI -----------------
+def build_ref_summary(df):
+    """Build reference summary for a single PDF: Ref | Order | Survey"""
+    order_counts = df.groupby("reference", dropna=False).size().rename("Order")
+    
+    survey_mask = df["width"].notna() & df["height"].notna()
+    survey_counts = (
+        df[survey_mask]
+        .groupby("reference", dropna=False)
+        .size()
+        .rename("Survey")
+    )
+
+    summary = pd.concat([order_counts, survey_counts], axis=1).fillna(0).astype(int)
+    summary.index = summary.index.fillna("Unknown")
+
+    total_row = pd.DataFrame(
+        {
+            "Order": [summary["Order"].sum()],
+            "Survey": [summary["Survey"].sum()],
+        },
+        index=["Total"],
+    )
+    summary_with_total = pd.concat([summary, total_row])
+    return summary_with_total.reset_index().rename(columns={"index": "Ref"})
+
+# ==== UI ====
 st.set_page_config(
-    page_title="WCS Editor - Fenesta",
+    page_title="WCS Survey Editor",
     layout="wide",
-    page_icon="📏",
     initial_sidebar_state="expanded",
 )
 
-# Main header
-st.markdown("## 🔴🔵 **WCS Survey Editor**")
-st.markdown("### *Edit survey dimensions → **Red text** in PDF shows >75mm differences*")
+st.title("WCS Survey Editor")
+st.markdown("Edit survey dimensions. Red text in PDF output indicates >75mm differences.")
 st.divider()
 
-# Sidebar instructions (top)
+# Sidebar
 with st.sidebar:
+    st.header("Instructions")
     st.markdown("""
-    # 📋 **How to Use**
-    
-    **1.** Upload Survey Sheet PDF(s)  
-    **2.** Edit **Width** and **Height** for each window  
-    **3.** **🔴 Red text in PDF** = difference > 75 mm  
-    **4.** Download **PDF + Excel** from bottom of page
+    1. Upload survey sheet PDFs
+    2. Edit Width and Height for each window
+    3. Red text in PDF = difference > 75mm
+    4. Download combined Excel and individual PDFs
     """)
-    st.markdown("---")
-    st.caption("© Fenesta Building Systems")
+    st.divider()
+    st.caption("Fenesta Building Systems")
+
+# Input: Lot name
+lot_name = st.text_input("Lot Name (optional):", value="", placeholder="Enter lot name")
 
 # File upload
 uploaded_pdfs = st.file_uploader(
-    "📁 **Choose Survey Sheet PDF(s)**",
+    "Upload Survey Sheet PDFs",
     type="pdf",
     accept_multiple_files=True,
 )
@@ -190,43 +209,36 @@ used_names = set()
 if uploaded_pdfs:
     st.divider()
 
-    file_name_prefix = st.text_input(
-        "📝 **Output file prefix**:",
-        value="WCS_Edited",
-        help="Prefix for ZIP and Excel filenames",
-    )
-
-    # Per-PDF editing
     for i, uploaded_pdf in enumerate(uploaded_pdfs, 1):
-        with st.expander(f"📄 **{uploaded_pdf.name}**", expanded=(i == 1)):
+        with st.expander(f"{uploaded_pdf.name}", expanded=(i == 1)):
             col1, col2 = st.columns([4, 1])
 
             with col1:
                 custom_pdf_name = st.text_input(
-                    "📄 **Output PDF name**:",
-                    value=f"{uploaded_pdf.name.replace('.pdf', '')}_edited",
+                    "Output PDF name",
+                    value=f"{uploaded_pdf.name.replace('.pdf', '')}",
                     key=f"name_{i}",
                 )
 
             with col2:
-                if st.button("🔄 **Refresh**", key=f"refresh_{i}"):
+                if st.button("Refresh", key=f"refresh_{i}"):
                     st.cache_data.clear()
                     st.rerun()
 
             if custom_pdf_name in used_names:
-                st.error("❌ **Duplicate filename** - please change")
+                st.error("Duplicate filename. Please change.")
                 continue
             used_names.add(custom_pdf_name)
 
-            with st.spinner("🔍 **Extracting sales data...**"):
+            with st.spinner("Extracting data..."):
                 sales_data = extract_sales_blocks(uploaded_pdf)
 
             if not sales_data:
-                st.warning("⚠️ **No sales lines detected** in this PDF")
+                st.warning("No sales lines detected in this PDF")
                 continue
 
-            # Editor (no status columns)
-            st.markdown("**✏️ Edit dimensions below:**")
+            # Editor
+            st.markdown("**Edit dimensions:**")
             base_df = pd.DataFrame(sales_data)
 
             edited_df = st.data_editor(
@@ -261,110 +273,63 @@ if uploaded_pdfs:
                 },
             )
 
-            # Store per-file data for Excel + sidebar summary
-            sheet_name = make_excel_safe_name(custom_pdf_name)
-            per_file_data.append((sheet_name, edited_df))
+            # Summary for this PDF
+            st.markdown("**Summary by Reference:**")
+            summary_df = build_ref_summary(edited_df)
+            st.dataframe(summary_df, hide_index=True, use_container_width=False)
 
-            # Generate edited PDF
+            # Store for combined Excel
+            sheet_name = make_excel_safe_name(custom_pdf_name)
+            per_file_data.append((sheet_name, edited_df, custom_pdf_name))
+
+            # Generate PDF
             uploaded_pdf.seek(0)
             edited_pdf = update_pdf(
                 uploaded_pdf.read(), edited_df.to_dict("records")
             )
             pdf_results.append((custom_pdf_name, edited_pdf))
 
-    # Sidebar Ref / Order / Survey summary (all PDFs combined)
-    if per_file_data:
-        all_df = pd.concat([df for _, df in per_file_data], ignore_index=True)
-
-        # Order = total windows per reference
-        order_counts = (
-            all_df.groupby("reference", dropna=False)
-            .size()
-            .rename("Order")
-        )
-
-        # Survey = windows with both width and height filled per reference
-        survey_mask = all_df["width"].notna() & all_df["height"].notna()
-        survey_counts = (
-            all_df[survey_mask]
-            .groupby("reference", dropna=False)
-            .size()
-            .rename("Survey")
-        )
-
-        summary = (
-            pd.concat([order_counts, survey_counts], axis=1)
-            .fillna(0)
-            .astype(int)
-        )
-        summary.index = summary.index.fillna("Unknown")
-
-        total_row = pd.DataFrame(
-            {
-                "Order": [summary["Order"].sum()],
-                "Survey": [summary["Survey"].sum()],
-            },
-            index=["Total"],
-        )
-        summary_with_total = pd.concat([summary, total_row])
-
-        with st.sidebar:
-            st.markdown("### 📊 **Window Count by Ref**")
-            st.dataframe(
-                summary_with_total.reset_index().rename(columns={"index": "Ref"}),
-                hide_index=True,
-                use_container_width=True,
-            )
-
     # Download section
     if per_file_data:
         st.divider()
-        st.markdown("### 📥 **Download Files**")
+        st.header("Download Files")
 
-        col1, col2 = st.columns([1, 3])
+        # Combined Excel
+        col1, col2 = st.columns([2, 2])
 
         with col1:
-            if st.button("📦 **ZIP All Files**", use_container_width=True):
-                zip_buffer = io.BytesIO()
-                with zipfile.ZipFile(
-                    zip_buffer, "w", zipfile.ZIP_DEFLATED
-                ) as zf:
-                    # Excel with all sheets
-                    excel_file = io.BytesIO()
-                    with pd.ExcelWriter(excel_file, engine="openpyxl") as writer:
-                        for sheet_name, df_part in per_file_data:
-                            df_part.to_excel(
-                                writer, index=False, sheet_name=sheet_name
-                            )
-                    zf.writestr(
-                        f"{file_name_prefix}.xlsx", excel_file.getvalue()
-                    )
+            st.markdown("**Combined Excel File**")
+            excel_file = io.BytesIO()
+            with pd.ExcelWriter(excel_file, engine="openpyxl") as writer:
+                for sheet_name, df_part, _ in per_file_data:
+                    df_part.to_excel(writer, index=False, sheet_name=sheet_name)
 
-                    # PDFs
-                    for pdf_name, pdf_bytes in pdf_results:
-                        zf.writestr(f"{pdf_name}.pdf", pdf_bytes)
-
-                zip_buffer.seek(0)
-                st.download_button(
-                    label="⬇️ **Download ZIP**",
-                    data=zip_buffer.getvalue(),
-                    file_name=f"{file_name_prefix}_{datetime.now().strftime('%Y%m%d_%H%M')}.zip",
-                    mime="application/zip",
-                )
+            excel_filename = f"{lot_name}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx" if lot_name else f"WCS_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+            
+            st.download_button(
+                label="Download Combined Excel",
+                data=excel_file.getvalue(),
+                file_name=excel_filename,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
 
         with col2:
-            for pdf_name, pdf_bytes in pdf_results:
-                st.download_button(
-                    label=f"📄 **{pdf_name}.pdf**",
-                    data=pdf_bytes,
-                    file_name=f"{pdf_name}.pdf",
-                    use_container_width=True,
-                )
+            st.markdown("**Individual PDFs**")
+
+        # Individual PDF downloads
+        for pdf_name, pdf_bytes in pdf_results:
+            pdf_filename = f"{lot_name}_{pdf_name}.pdf" if lot_name else f"{pdf_name}.pdf"
+            st.download_button(
+                label=f"Download {pdf_name}",
+                data=pdf_bytes,
+                file_name=pdf_filename,
+                mime="application/pdf",
+                use_container_width=True,
+            )
 
 else:
-    st.info("👆 **Upload survey sheet PDFs** to start editing dimensions")
+    st.info("Upload survey sheet PDFs to start editing")
 
-st.markdown("---")
-st.caption(
-    "*Red text in PDF output highlights >75 mm differences from order sizes.*"
-)
+st.divider()
+st.caption("Red text in PDF indicates >75mm difference from order sizes")
