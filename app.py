@@ -1,5 +1,5 @@
 # ==========================
-# 📝 WCS Editor (v30 - Minimalist)
+# 📝 WCS Editor (v31 - Yellow Highlighting)
 # ==========================
 
 import streamlit as st
@@ -63,9 +63,7 @@ def extract_sales_blocks(pdf_file):
             "width": None,
             "height": None,
             "location_input": "",
-            "remarks": "",
-            "w_status": "➖",
-            "h_status": "➖"
+            "remarks": ""
         })
     return blocks
 
@@ -77,6 +75,26 @@ def safe_float_convert(val):
         return float(val)
     except:
         return None
+
+def create_styled_editor(df):
+    """Create styled DataFrame with yellow highlighting for >75mm differences"""
+    def highlight_width_mismatch(val, row):
+        if pd.isna(val) or row.get('order_width') is None:
+            return ''
+        diff = abs(row['order_width'] - val)
+        return 'background-color: #FFF9C4; color: #000' if diff > 75 else ''
+    
+    def highlight_height_mismatch(val, row):
+        if pd.isna(val) or row.get('order_height') is None:
+            return ''
+        diff = abs(row['order_height'] - val)
+        return 'background-color: #FFF9C4; color: #000' if diff > 75 else ''
+    
+    styled_df = (df.style
+        .map(highlight_width_mismatch, subset=['width'])
+        .map(highlight_height_mismatch, subset=['height']))
+    
+    return styled_df
 
 def update_pdf(pdf_bytes, entries):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -134,26 +152,6 @@ def update_pdf(pdf_bytes, entries):
     doc.save(out_bytes)
     return out_bytes.getvalue()
 
-def update_status_indicators(df):
-    df_copy = df.copy()
-    for idx, row in df_copy.iterrows():
-        # Width status
-        w_val = safe_float_convert(row['width'])
-        if w_val is not None and row['order_width'] is not None:
-            diff_w = abs(row['order_width'] - w_val)
-            df_copy.at[idx, 'w_status'] = "🔴" if diff_w > 75 else "✅"
-        else:
-            df_copy.at[idx, 'w_status'] = "➖"
-        
-        # Height status
-        h_val = safe_float_convert(row['height'])
-        if h_val is not None and row['order_height'] is not None:
-            diff_h = abs(row['order_height'] - h_val)
-            df_copy.at[idx, 'h_status'] = "🔴" if diff_h > 75 else "✅"
-        else:
-            df_copy.at[idx, 'h_status'] = "➖"
-    return df_copy
-
 def calculate_mismatches(df):
     w_issues = 0
     h_issues = 0
@@ -190,15 +188,13 @@ with st.sidebar:
     
     **1. Upload** Survey Sheet PDF(s)
     **2. Edit** Width/Height values  
-    **3. Check** 🔴/✅ indicators
+    **3. Check** 🟡 yellow highlights
     **4. Download** edited PDF + Excel
     
     ---
-    **🔴 Red** = >75mm difference  
-    **✅ Green** = Within tolerance  
-    **➖ Grey** = No input
-    
-    **💡 Tip:** Tab between cells for instant validation
+    **🟡 Yellow cells** = >75mm difference  
+    **⚪ White cells** = Within tolerance  
+    **💡 Tip:** Tab between cells for instant highlighting
     """)
     
     st.markdown("---")
@@ -219,14 +215,10 @@ uploaded_pdfs = st.file_uploader(
 if uploaded_pdfs:
     st.divider()
     
-    # Progress container
-    progress_container = st.container()
-    
     file_name_prefix = st.text_input("Output prefix", value="WCS_Edited")
     per_file_data = []
     pdf_results = []
     used_names = set()
-    total_mismatches = 0
 
     for i, uploaded_pdf in enumerate(uploaded_pdfs, start=1):
         with st.expander(f"📄 {uploaded_pdf.name}", expanded=(i==1)):
@@ -256,10 +248,12 @@ if uploaded_pdfs:
                 st.warning("⚠️ No sales lines detected")
                 continue
 
-            # Update status and show editor
+            # Create styled editor
             df = pd.DataFrame(sales_data)
+            styled_df = create_styled_editor(df)
+            
             edited_df = st.data_editor(
-                update_status_indicators(df),
+                styled_df,
                 num_rows="fixed",
                 hide_index=True,
                 use_container_width=True,
@@ -267,9 +261,7 @@ if uploaded_pdfs:
                 column_config={
                     "sales_line": st.column_config.TextColumn("Sales Line", disabled=True, width="small"),
                     "order_width": st.column_config.NumberColumn("Order W", disabled=True, width="small"),
-                    "w_status": st.column_config.TextColumn("W", disabled=True, width="small"),
                     "order_height": st.column_config.NumberColumn("Order H", disabled=True, width="small"),
-                    "h_status": st.column_config.TextColumn("H", disabled=True, width="small"),
                     "reference": st.column_config.TextColumn("Ref", disabled=True),
                     "location": st.column_config.TextColumn("Location", disabled=True),
                     "system": st.column_config.TextColumn("System", disabled=True),
@@ -282,7 +274,6 @@ if uploaded_pdfs:
 
             # Metrics
             w_issues, h_issues = calculate_mismatches(edited_df)
-            total_mismatches += w_issues + h_issues
             
             col1, col2, col3 = st.columns(3)
             col1.metric("Width Issues", w_issues, delta=None)
