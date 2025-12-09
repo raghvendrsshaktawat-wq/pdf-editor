@@ -1,5 +1,5 @@
 # ==========================
-# 📝 WCS Editor (v34 - TRUE Live Updates + Refresh)
+# 📝 WCS Editor (v35 - Clean Editor + Red PDF Logic)
 # ==========================
 
 import streamlit as st
@@ -63,9 +63,7 @@ def extract_sales_blocks(pdf_file):
             "width": None,
             "height": None,
             "location_input": "",
-            "remarks": "",
-            "w_status": "➖",  # ✅ INCLUDED IN INITIAL DATA
-            "h_status": "➖"   # ✅ INCLUDED IN INITIAL DATA
+            "remarks": ""
         })
     return blocks
 
@@ -76,26 +74,6 @@ def safe_float_convert(val):
         return float(val)
     except:
         return None
-
-def update_status_columns(df):
-    """Update status columns based on current width/height values"""
-    df_out = df.copy()
-    for idx, row in df_out.iterrows():
-        w_val = safe_float_convert(row['width'])
-        h_val = safe_float_convert(row['height'])
-        
-        # Width status
-        if w_val is not None and row['order_width'] is not None:
-            df_out.at[idx, 'w_status'] = "🟡" if abs(row['order_width'] - w_val) > 75 else "✅"
-        else:
-            df_out.at[idx, 'w_status'] = "➖"
-        
-        # Height status
-        if h_val is not None and row['order_height'] is not None:
-            df_out.at[idx, 'h_status'] = "🟡" if abs(row['order_height'] - h_val) > 75 else "✅"
-        else:
-            df_out.at[idx, 'h_status'] = "➖"
-    return df_out
 
 def update_pdf(pdf_bytes, entries):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -122,11 +100,12 @@ def update_pdf(pdf_bytes, entries):
         input_w = safe_float_convert(entry.get("width"))
         input_h = safe_float_convert(entry.get("height"))
         
-        color = (0, 0, 1)
-        if order_w and input_w and abs(order_w - input_w) > 75:
-            color = (1, 0, 0)
-        if order_h and input_h and abs(order_h - input_h) > 75:
-            color = (1, 0, 0)
+        # ✅ EXISTING RED LOGIC - Perfect as-is!
+        color = (0, 0, 1)  # Blue
+        if order_w is not None and input_w is not None and abs(order_w - input_w) > 75:
+            color = (1, 0, 0)  # Red
+        if order_h is not None and input_h is not None and abs(order_h - input_h) > 75:
+            color = (1, 0, 0)  # Red
 
         size_text = f"{input_w:.0f} x {input_h:.0f}" if input_w and input_h else "N/A"
         location_text = f"({entry.get('location_input', '')})"
@@ -173,19 +152,22 @@ st.set_page_config(page_title="WCS Editor", layout="wide", page_icon="📏", ini
 with st.sidebar:
     st.markdown("""
     # 📋 Quick Start
+    
     **1.** Upload Survey Sheet PDF(s)
     **2.** Edit Width/Height values  
-    **3.** 🟡/✅ update LIVE
+    **3.** **Red text in PDF** = >75mm difference
     **4.** Download edited PDF + Excel
     
     ---
-    **🟡** = >75mm difference  **✅** = OK  **➖** = No input
+    **🔴 Red in PDF** = Out of tolerance  
+    **🔵 Blue in PDF** = OK  
+    **Metrics show live issues**
     """)
     st.markdown("---")
     st.caption("© Fenesta Building Systems")
 
 st.title("📏 WCS Editor")
-st.markdown("*Real-time dimension validation*")
+st.markdown("*Clean editor - Red validation in PDF output*")
 
 uploaded_pdfs = st.file_uploader("Choose PDF files", type="pdf", accept_multiple_files=True)
 
@@ -203,10 +185,7 @@ if uploaded_pdfs:
                     value=f"{uploaded_pdf.name.replace('.pdf','')}_edited", key=f"name_{i}")
             
             with col2:
-                if st.button("🔄 FULL REFRESH", key=f"refresh_{i}", type="primary"):
-                    # ✅ FORCE COMPLETE REFRESH
-                    if f"df_{i}" in st.session_state:
-                        del st.session_state[f"df_{i}"]
+                if st.button("🔄 Refresh", key=f"refresh_{i}"):
                     st.cache_data.clear()
                     st.rerun()
 
@@ -222,21 +201,15 @@ if uploaded_pdfs:
                 st.warning("⚠️ No sales lines detected")
                 continue
 
-            # ✅ INITIALIZE WITH STATUS COLUMNS
-            if f"df_{i}" not in st.session_state:
-                st.session_state[f"df_{i}"] = pd.DataFrame(sales_data)
-
-            # ✅ EDITOR - Status columns are DISABLED
+            # ✅ CLEAN EDITOR - NO STATUS COLUMNS
             edited_df = st.data_editor(
-                st.session_state[f"df_{i}"],
+                pd.DataFrame(sales_data),
                 num_rows="fixed", hide_index=True, use_container_width=True,
                 key=f"editor_{i}",
                 column_config={
                     "sales_line": st.column_config.TextColumn("Sales Line", disabled=True, width="small"),
                     "order_width": st.column_config.NumberColumn("Order W", disabled=True, width="small"),
-                    "w_status": st.column_config.TextColumn("W", disabled=True, width="small"),
                     "order_height": st.column_config.NumberColumn("Order H", disabled=True, width="small"),
-                    "h_status": st.column_config.TextColumn("H", disabled=True, width="small"),
                     "reference": st.column_config.TextColumn("Ref", disabled=True),
                     "location": st.column_config.TextColumn("Location", disabled=True),
                     "system": st.column_config.TextColumn("System", disabled=True),
@@ -247,30 +220,18 @@ if uploaded_pdfs:
                 }
             )
 
-            # ✅ UPDATE SESSION STATE IMMEDIATELY
-            st.session_state[f"df_{i}"] = edited_df
-
-            # ✅ LIVE STATUS UPDATE - Runs every time!
-            display_df = update_status_columns(edited_df)
-
-            # ✅ SHOW LIVE STATUS TABLE
-            st.markdown("**Live Status:**")
-            st.dataframe(display_df[['sales_line', 'order_width', 'w_status', 'order_height', 'h_status', 'width', 'height']], 
-                        hide_index=True, use_container_width=True)
-
-            # ✅ LIVE METRICS
+            # ✅ LIVE METRICS - Shows issues instantly
             w_issues, h_issues = calculate_mismatches(edited_df)
             col1, col2, col3 = st.columns(3)
             col1.metric("Width Issues", w_issues)
             col2.metric("Height Issues", h_issues) 
             col3.metric("Records", len(edited_df))
 
-            # Store clean data
-            clean_df = edited_df.drop(columns=['w_status', 'h_status'], errors='ignore')
+            # Store clean data for PDF/Excel
             sheet_name = make_excel_safe_name(custom_pdf_name)
-            per_file_data.append((sheet_name, clean_df))
+            per_file_data.append((sheet_name, edited_df))
             uploaded_pdf.seek(0)
-            edited_pdf = update_pdf(uploaded_pdf.read(), clean_df.to_dict("records"))
+            edited_pdf = update_pdf(uploaded_pdf.read(), edited_df.to_dict("records"))
             pdf_results.append((custom_pdf_name, edited_pdf))
 
     if per_file_data:
