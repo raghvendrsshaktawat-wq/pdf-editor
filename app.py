@@ -1,5 +1,5 @@
 # ==========================
-# 📝 WCS Editor (v31 - Fixed Yellow Highlighting)
+# 📝 WCS Editor (v32 - Live Status Updates)
 # ==========================
 
 import streamlit as st
@@ -63,7 +63,9 @@ def extract_sales_blocks(pdf_file):
             "width": None,
             "height": None,
             "location_input": "",
-            "remarks": ""
+            "remarks": "",
+            "w_status": "➖",
+            "h_status": "➖"
         })
     return blocks
 
@@ -76,8 +78,8 @@ def safe_float_convert(val):
     except:
         return None
 
-def update_status_columns(df):
-    """Add status columns for display (non-editable)"""
+def update_status_live(df):
+    """Live status update - called after every edit"""
     df_copy = df.copy()
     for idx, row in df_copy.iterrows():
         # Width status
@@ -189,7 +191,7 @@ with st.sidebar:
     
     **1. Upload** Survey Sheet PDF(s)
     **2. Edit** Width/Height values  
-    **3. Check** 🟡/✅ indicators
+    **3. **🟡/✅ update live**
     **4. Download** edited PDF + Excel
     
     ---
@@ -197,7 +199,7 @@ with st.sidebar:
     **✅ Green** = Within tolerance  
     **➖ Grey** = No input
     
-    **💡 Tip:** Tab between cells for instant validation
+    **💡 Tip:** Status updates instantly!
     """)
     
     st.markdown("---")
@@ -251,12 +253,11 @@ if uploaded_pdfs:
                 st.warning("⚠️ No sales lines detected")
                 continue
 
-            # Create editor with status columns
+            # Data editor with status columns INCLUDED in data
             df = pd.DataFrame(sales_data)
-            display_df = update_status_columns(df)
             
             edited_df = st.data_editor(
-                display_df,
+                df,
                 num_rows="fixed",
                 hide_index=True,
                 use_container_width=True,
@@ -277,7 +278,10 @@ if uploaded_pdfs:
                 }
             )
 
-            # Metrics
+            # LIVE STATUS UPDATE - This runs after every edit!
+            display_df = update_status_live(edited_df)
+            
+            # Metrics from live data
             w_issues, h_issues = calculate_mismatches(edited_df)
             
             col1, col2, col3 = st.columns(3)
@@ -285,7 +289,7 @@ if uploaded_pdfs:
             col2.metric("Height Issues", h_issues, delta=None)
             col3.metric("Records", len(edited_df))
 
-            # Store data (without status columns for PDF/Excel)
+            # Store clean data (without status columns for PDF/Excel)
             clean_df = edited_df.drop(columns=['w_status', 'h_status'], errors='ignore')
             sheet_name = make_excel_safe_name(custom_pdf_name)
             per_file_data.append((sheet_name, clean_df))
