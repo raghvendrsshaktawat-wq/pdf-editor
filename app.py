@@ -105,9 +105,9 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
     base_offset_x = 40
     base_offset_y = 10
     font_size = 14
-    line_spacing = 18  # space between lines
+    line_spacing = 18  # vertical distance between line 1 and line 2
 
-    # Write Surveyor Name into SECOND "Name" field (if present)
+    # ===== Surveyor Name: SECOND "Name" label =====
     if surveyor_name:
         for page in doc:
             name_rects = page.search_for("Name")
@@ -130,9 +130,9 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
                 fontsize=11,
                 color=(0, 0, 0),
             )
-            break  # stop after first page where we wrote the name
+            break
 
-    # Find all "Aperture Size" anchors (case-insensitive, with/without space)
+    # ===== Find aperture anchor positions =====
     aperture_positions = []
     for page_num, page in enumerate(doc):
         rects1 = page.search_for("Aperture Size")
@@ -142,8 +142,10 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
             aperture_positions.append((page_num, inst))
 
     if not aperture_positions:
-        print("No 'Aperture Size' anchors found in PDF. Sizes will not be written.")
+        print("No 'Aperture Size' anchors found in PDF.")
+        # still continue; nothing will be drawn
 
+    # ===== Write each row =====
     for idx, entry in enumerate(entries):
         if idx >= len(aperture_positions):
             break
@@ -152,30 +154,43 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
         page = doc[page_num]
         fontname = get_fontname_for_page(page)
 
-        order_w = entry.get("order_width")
-        order_h = entry.get("order_height")
-        input_w = safe_float_convert(entry.get("width"))
-        input_h = safe_float_convert(entry.get("height"))
-        
-        color = (0, 0, 1)  # Blue
-        if order_w is not None and input_w is not None and abs(order_w - input_w) > 75:
-            color = (1, 0, 0)  # Red
-        if order_h is not None and input_h is not None and abs(order_h - input_h) > 75:
-            color = (1, 0, 0)  # Red
+        # --- take EXACT values from editor for this row ---
+        survey_w_raw = entry.get("width")
+        survey_h_raw = entry.get("height")
 
-        if input_w is not None and input_h is not None:
-            size_text = f"{input_w:.0f} x {input_h:.0f}"
+        # convert to float only if not None / not empty
+        survey_w = safe_float_convert(survey_w_raw)
+        survey_h = safe_float_convert(survey_h_raw)
+
+        order_w = safe_float_convert(entry.get("order_width"))
+        order_h = safe_float_convert(entry.get("order_height"))
+
+        # color: only when survey values exist and differ > 75 from order
+        color = (0, 0, 1)  # blue
+        if survey_w is not None and order_w is not None and abs(order_w - survey_w) > 75:
+            color = (1, 0, 0)
+        if survey_h is not None and order_h is not None and abs(order_h - survey_h) > 75:
+            color = (1, 0, 0)
+
+        # size text: use SURVEY values only; if either missing, show nothing
+        if survey_w is not None and survey_h is not None:
+            size_text = f"{survey_w:.0f} x {survey_h:.0f}"
         else:
-            size_text = "N/A"
+            size_text = ""  # no "N/A"
 
-        location_input = entry.get('location_input', '').strip()
-        remarks_text = entry.get("remarks", "").strip()
+        location_input = (entry.get("location_input") or "").strip()
+        remarks_text = (entry.get("remarks") or "").strip()
 
         insert_x = inst.x1 + base_offset_x
         insert_y = inst.y0 + base_offset_y
 
-        # Line 1: "Location : Width x Height"
-        line1_text = f"{location_input} : {size_text}"
+        # Line 1: "Location  :  Width x Height"
+        if size_text:
+            line1_text = f"{location_input} : {size_text}"
+        else:
+            # if somehow size is missing, at least show location
+            line1_text = location_input
+
         draw_text_with_white_bg(
             page,
             (insert_x, insert_y),
@@ -185,12 +200,11 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
             color=color,
         )
 
-        # Line 2: "Remarks" (if any)
+        # Line 2: remarks, if any
         if remarks_text:
-            insert_y_line2 = insert_y + line_spacing
             draw_text_with_white_bg(
                 page,
-                (insert_x, insert_y_line2),
+                (insert_x, insert_y + line_spacing),
                 remarks_text,
                 fontname=fontname,
                 fontsize=font_size,
@@ -200,6 +214,7 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
     out_bytes = io.BytesIO()
     doc.save(out_bytes)
     return out_bytes.getvalue()
+
 
 def make_excel_safe_name(name):
     return "".join(c if c.isalnum() else "_" for c in name)[:31] or "Sheet"
