@@ -1,5 +1,5 @@
 # ==========================
-# 📝 WCS Editor (v28 - Fixed Syntax)
+# 📝 WCS Editor (v29 - Fixed Pandas Error)
 # ==========================
 
 import streamlit as st
@@ -9,6 +9,7 @@ import io
 import re
 import zipfile
 from datetime import datetime
+import numpy as np
 
 # Fenesta Brand Colors
 FENESTA_BLUE = "#003087"
@@ -130,18 +131,47 @@ def update_pdf(pdf_bytes, entries):
 def update_status_indicators(df):
     df_copy = df.copy()
     for idx, row in df_copy.iterrows():
-        if pd.isna(row['width']) or row['order_width'] is None:
+        # Width status - safe numeric conversion
+        try:
+            w_val = float(row['width']) if pd.notna(row['width']) else None
+            if w_val is not None and row['order_width'] is not None:
+                diff_w = abs(row['order_width'] - w_val)
+                df_copy.at[idx, 'w_status'] = "🔴" if diff_w > 75 else "✅"
+            else:
+                df_copy.at[idx, 'w_status'] = "➖"
+        except:
             df_copy.at[idx, 'w_status'] = "➖"
-        else:
-            diff_w = abs(row['order_width'] - row['width'])
-            df_copy.at[idx, 'w_status'] = "🔴" if diff_w > 75 else "✅"
         
-        if pd.isna(row['height']) or row['order_height'] is None:
+        # Height status - safe numeric conversion
+        try:
+            h_val = float(row['height']) if pd.notna(row['height']) else None
+            if h_val is not None and row['order_height'] is not None:
+                diff_h = abs(row['order_height'] - h_val)
+                df_copy.at[idx, 'h_status'] = "🔴" if diff_h > 75 else "✅"
+            else:
+                df_copy.at[idx, 'h_status'] = "➖"
+        except:
             df_copy.at[idx, 'h_status'] = "➖"
-        else:
-            diff_h = abs(row['order_height'] - row['height'])
-            df_copy.at[idx, 'h_status'] = "🔴" if diff_h > 75 else "✅"
     return df_copy
+
+def calculate_mismatches(df):
+    """Safe mismatch calculation avoiding pandas dtype issues"""
+    w_issues = 0
+    h_issues = 0
+    
+    for idx, row in df.iterrows():
+        try:
+            w_val = float(row['width']) if pd.notna(row['width']) else 0
+            h_val = float(row['height']) if pd.notna(row['height']) else 0
+            
+            if abs(row['order_width'] - w_val) > 75:
+                w_issues += 1
+            if abs(row['order_height'] - h_val) > 75:
+                h_issues += 1
+        except:
+            pass  # Skip invalid values
+    
+    return w_issues, h_issues
 
 def make_excel_safe_name(name):
     safe = "".join(c if c.isalnum() else "_" for c in name)[:31]
@@ -159,11 +189,6 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-col1, col2, col3 = st.columns(3)
-col1.metric("📄 Files", 0)
-col2.metric("🔴 Critical", 0)
-col3.metric("✅ Valid", 100)
-
 st.divider()
 
 tab1, tab2 = st.tabs(["📤 Upload & Edit", "ℹ️ Guide"])
@@ -176,6 +201,7 @@ with tab1:
         per_file_data = []
         pdf_results = []
         used_names = set()
+        total_mismatches = 0
 
         for i, uploaded_pdf in enumerate(uploaded_pdfs, start=1):
             with st.expander(f"📄 File {i}: {uploaded_pdf.name}", expanded=True):
@@ -211,14 +237,14 @@ with tab1:
                     hide_index=True,
                     key=f"editor_{i}",
                     column_config={
-                        "sales_line": st.column_config.TextColumn("Sales Line", disabled=True, width="small"),
-                        "order_width": st.column_config.NumberColumn("Order W", disabled=True, width="small"),
-                        "w_status": st.column_config.TextColumn("W", disabled=True, width="small"),
-                        "order_height": st.column_config.NumberColumn("Order H", disabled=True, width="small"),
-                        "h_status": st.column_config.TextColumn("H", disabled=True, width="small"),
+                        "sales_line": st.column_config.TextColumn("Sales Line", disabled=True),
+                        "order_width": st.column_config.NumberColumn("Order W", disabled=True),
+                        "w_status": st.column_config.TextColumn("W", disabled=True),
+                        "order_height": st.column_config.NumberColumn("Order H", disabled=True),
+                        "h_status": st.column_config.TextColumn("H", disabled=True),
                         "reference": st.column_config.TextColumn("Reference", disabled=True),
                         "location": st.column_config.TextColumn("Location", disabled=True),
-                        "system": st.column_config.TextColumn("System", disabled=True, width="small"),
+                        "system": st.column_config.TextColumn("System", disabled=True),
                         "width": st.column_config.NumberColumn("Input Width (mm)", step=1),
                         "height": st.column_config.NumberColumn("Input Height (mm)", step=1),
                         "location_input": st.column_config.TextColumn("Location (Input)"),
@@ -226,13 +252,14 @@ with tab1:
                     }
                 )
 
-                w_mismatches = ((abs(edited_df['order_width'] - edited_df['width'].fillna(0)) > 75)).sum()
-                h_mismatches = ((abs(edited_df['order_height'] - edited_df['height'].fillna(0)) > 75)).sum()
+                # Safe mismatch calculation
+                w_issues, h_issues = calculate_mismatches(edited_df)
+                total_mismatches += w_issues + h_issues
                 
                 col1, col2, col3 = st.columns(3)
-                col1.metric("🔴 Width Issues", w_mismatches)
-                col2.metric("🔴 Height Issues", h_mismatches)
-                col3.metric("✅ Total OK", len(edited_df) * 2 - (w_mismatches + h_mismatches))
+                col1.metric("🔴 Width Issues", w_issues)
+                col2.metric("🔴 Height Issues", h_issues)
+                col3.metric("✅ Total OK", len(edited_df) * 2 - (w_issues + h_issues))
 
                 sheet_name = make_excel_safe_name(custom_pdf_name)
                 per_file_data.append((sheet_name, edited_df))
@@ -285,4 +312,4 @@ with tab2:
     """)
 
 st.markdown("---")
-st.caption("© Fenesta Building Systems | Streamlit 1.52.1 | v28")
+st.caption("© Fenesta Building Systems | Streamlit 1.52.1 | v29")
