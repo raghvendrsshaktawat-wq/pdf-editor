@@ -1,5 +1,5 @@
 # ==========================
-# WCS Survey Editor
+# WCS Survey Editor (v40 - Times-Roman + Surveyor Name)
 # ==========================
 
 import streamlit as st
@@ -7,7 +7,6 @@ import fitz
 import pandas as pd
 import io
 import re
-import zipfile
 from datetime import datetime
 import numpy as np
 
@@ -70,13 +69,63 @@ def safe_float_convert(val):
     except:
         return None
 
-def update_pdf(pdf_bytes, entries):
+def get_fontname_for_page(page):
+    """
+    Use built-in Times-Roman family (PyMuPDF alias 'tiro').
+    This requires no external font files.
+    """
+    return "tiro"  # Times-Roman family [web:63]
+
+def draw_text_with_white_bg(page, point, text, fontname, fontsize, color):
+    """
+    Draw a white rectangle behind the text, then draw the text.
+    Uses a fixed-width white box for simplicity.
+    """
+    if not text:
+        return
+
+    x, y = point
+    box_width = 140  # adjust if needed
+    box_height = fontsize + 6
+
+    bg_rect = fitz.Rect(x - 2, y - fontsize, x - 2 + box_width, y - fontsize + box_height)
+    page.draw_rect(bg_rect, color=(1, 1, 1), fill=(1, 1, 1), width=0)
+
+    page.insert_text(
+        (x, y),
+        text,
+        fontsize=fontsize,
+        fontname=fontname,
+        color=color,
+        render_mode=0,
+    )
+
+def update_pdf(pdf_bytes, entries, surveyor_name=None):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     base_offset_x = 40
     base_offset_y = 10
     spacing1 = 120
     spacing2 = 80
     font_size = 14
+
+    # First: write Surveyor Name into "Name" field (if present)
+    if surveyor_name:
+        for page in doc:
+            name_rects = page.search_for("Name")
+            if name_rects:
+                name_rect = name_rects[0]
+                fontname = get_fontname_for_page(page)
+                text_x = name_rect.x1 + 10
+                text_y = name_rect.y1 - 3
+                draw_text_with_white_bg(
+                    page,
+                    (text_x, text_y),
+                    surveyor_name,
+                    fontname=fontname,
+                    fontsize=11,
+                    color=(0, 0, 0),
+                )
+                break  # assume first occurrence is enough
 
     aperture_positions = []
     for page_num, page in enumerate(doc):
@@ -89,6 +138,7 @@ def update_pdf(pdf_bytes, entries):
 
         page_num, inst = aperture_positions[idx]
         page = doc[page_num]
+        fontname = get_fontname_for_page(page)
 
         order_w = entry.get("order_width")
         order_h = entry.get("order_height")
@@ -107,34 +157,38 @@ def update_pdf(pdf_bytes, entries):
 
         insert_x = inst.x1 + base_offset_x
         insert_y = inst.y0 + base_offset_y
-        page.insert_text(
+
+        # Size text with white background
+        draw_text_with_white_bg(
+            page,
             (insert_x, insert_y),
             size_text,
+            fontname=fontname,
             fontsize=font_size,
-            fontname="helv",
             color=color,
-            render_mode=2,
         )
 
+        # Location text with white background
         loc_x = insert_x + spacing1
-        page.insert_text(
+        draw_text_with_white_bg(
+            page,
             (loc_x, insert_y),
             location_text,
+            fontname=fontname,
             fontsize=font_size,
-            fontname="helv",
             color=color,
-            render_mode=2,
         )
 
+        # Remarks text with white background (if any)
         if remarks_text:
             rem_x = loc_x + spacing2
-            page.insert_text(
+            draw_text_with_white_bg(
+                page,
                 (rem_x, insert_y),
                 remarks_text,
+                fontname=fontname,
                 fontsize=font_size,
-                fontname="helv",
                 color=color,
-                render_mode=2,
             )
 
     out_bytes = io.BytesIO()
@@ -177,17 +231,17 @@ st.set_page_config(
 )
 
 st.title("WCS Survey Editor")
-st.markdown("Edit survey dimensions. Red text in PDF output indicates >75mm differences.")
+st.markdown("Edit survey dimensions. Red text in PDF output indicates >75 mm differences.")
 st.divider()
 
 # Sidebar
 with st.sidebar:
     st.header("Instructions")
     st.markdown("""
-    1. Upload survey sheet PDFs
-    2. Edit Width and Height for each window
-    3. Red text in PDF = difference > 75mm
-    4. Download combined Excel and individual PDFs
+1. Enter lot name (optional).
+2. Upload survey sheet PDFs.
+3. For each PDF, enter Surveyor Name and edit Width / Height.
+4. Download combined Excel and individual PDFs.
     """)
     st.divider()
     st.caption("Fenesta Building Systems")
@@ -211,6 +265,13 @@ if uploaded_pdfs:
 
     for i, uploaded_pdf in enumerate(uploaded_pdfs, 1):
         with st.expander(f"{uploaded_pdf.name}", expanded=(i == 1)):
+            # Per-PDF surveyor name and output name
+            surveyor_name = st.text_input(
+                "Surveyor Name",
+                value="",
+                key=f"surveyor_{i}",
+            )
+
             col1, col2 = st.columns([4, 1])
 
             with col1:
@@ -238,7 +299,7 @@ if uploaded_pdfs:
                 continue
 
             # Editor
-            st.markdown("**Edit dimensions:**")
+            st.markdown("Edit dimensions:")
             base_df = pd.DataFrame(sales_data)
 
             edited_df = st.data_editor(
@@ -274,20 +335,22 @@ if uploaded_pdfs:
             )
 
             # Summary for this PDF
-            st.markdown("**Summary by Reference:**")
+            st.markdown("Summary by Reference:")
             summary_df = build_ref_summary(edited_df)
             st.dataframe(summary_df, hide_index=True, use_container_width=False)
 
             # Store for combined Excel
             sheet_name = make_excel_safe_name(custom_pdf_name)
-            per_file_data.append((sheet_name, edited_df, custom_pdf_name))
+            per_file_data.append((sheet_name, edited_df, custom_pdf_name, surveyor_name))
 
             # Generate PDF
             uploaded_pdf.seek(0)
             edited_pdf = update_pdf(
-                uploaded_pdf.read(), edited_df.to_dict("records")
+                uploaded_pdf.read(),
+                edited_df.to_dict("records"),
+                surveyor_name=surveyor_name,
             )
-            pdf_results.append((custom_pdf_name, edited_pdf))
+            pdf_results.append((custom_pdf_name, edited_pdf, surveyor_name))
 
     # Download section
     if per_file_data:
@@ -295,31 +358,36 @@ if uploaded_pdfs:
         st.header("Download Files")
 
         # Combined Excel
-        col1, col2 = st.columns([2, 2])
+        st.subheader("Combined Excel File")
+        excel_file = io.BytesIO()
+        with pd.ExcelWriter(excel_file, engine="openpyxl") as writer:
+            for sheet_name, df_part, _, _ in per_file_data:
+                df_part.to_excel(writer, index=False, sheet_name=sheet_name)
 
-        with col1:
-            st.markdown("**Combined Excel File**")
-            excel_file = io.BytesIO()
-            with pd.ExcelWriter(excel_file, engine="openpyxl") as writer:
-                for sheet_name, df_part, _ in per_file_data:
-                    df_part.to_excel(writer, index=False, sheet_name=sheet_name)
+        excel_filename = (
+            f"{lot_name}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+            if lot_name
+            else f"WCS_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+        )
 
-            excel_filename = f"{lot_name}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx" if lot_name else f"WCS_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
-            
-            st.download_button(
-                label="Download Combined Excel",
-                data=excel_file.getvalue(),
-                file_name=excel_filename,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-            )
+        st.download_button(
+            label="Download Combined Excel",
+            data=excel_file.getvalue(),
+            file_name=excel_filename,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
 
-        with col2:
-            st.markdown("**Individual PDFs**")
+        st.subheader("Individual PDFs")
 
         # Individual PDF downloads
-        for pdf_name, pdf_bytes in pdf_results:
-            pdf_filename = f"{lot_name}_{pdf_name}.pdf" if lot_name else f"{pdf_name}.pdf"
+        for pdf_name, pdf_bytes, surveyor_name in pdf_results:
+            if lot_name:
+                base = f"{lot_name}_{pdf_name}"
+            else:
+                base = pdf_name
+            pdf_filename = f"{base}.pdf"
+
             st.download_button(
                 label=f"Download {pdf_name}",
                 data=pdf_bytes,
@@ -332,4 +400,4 @@ else:
     st.info("Upload survey sheet PDFs to start editing")
 
 st.divider()
-st.caption("Red text in PDF indicates >75mm difference from order sizes")
+st.caption("Red text in PDF indicates >75 mm difference from order sizes.")
