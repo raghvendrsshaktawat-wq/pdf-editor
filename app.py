@@ -1,5 +1,5 @@
 # ==========================
-# WCS Survey Editor (v41 - Times-Roman, 2nd Name, Fixed Aperture Text)
+# WCS Survey Editor (v42 - New Format: Location : Width x Height + Remarks)
 # ==========================
 
 import streamlit as st
@@ -85,7 +85,7 @@ def draw_text_with_white_bg(page, point, text, fontname, fontsize, color):
         return
 
     x, y = point
-    box_width = 140  # adjust if needed
+    box_width = 200  # increased for longer text
     box_height = fontsize + 6
 
     bg_rect = fitz.Rect(x - 2, y - fontsize, x - 2 + box_width, y - fontsize + box_height)
@@ -104,9 +104,8 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     base_offset_x = 40
     base_offset_y = 10
-    spacing1 = 120
-    spacing2 = 80
     font_size = 14
+    line_spacing = 18  # space between lines
 
     # Write Surveyor Name into SECOND "Name" field (if present)
     if surveyor_name:
@@ -169,39 +168,29 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
         else:
             size_text = "N/A"
 
-        location_text = f"({entry.get('location_input', '')})"
-        remarks_text = entry.get("remarks", "")
+        location_input = entry.get('location_input', '').strip()
+        remarks_text = entry.get("remarks", "").strip()
 
         insert_x = inst.x1 + base_offset_x
         insert_y = inst.y0 + base_offset_y
 
-        # Size text with white background
+        # Line 1: "Location : Width x Height"
+        line1_text = f"{location_input} : {size_text}"
         draw_text_with_white_bg(
             page,
             (insert_x, insert_y),
-            size_text,
+            line1_text,
             fontname=fontname,
             fontsize=font_size,
             color=color,
         )
 
-        # Location text with white background
-        loc_x = insert_x + spacing1
-        draw_text_with_white_bg(
-            page,
-            (loc_x, insert_y),
-            location_text,
-            fontname=fontname,
-            fontsize=font_size,
-            color=color,
-        )
-
-        # Remarks text with white background (if any)
+        # Line 2: "Remarks" (if any)
         if remarks_text:
-            rem_x = loc_x + spacing2
+            insert_y_line2 = insert_y + line_spacing
             draw_text_with_white_bg(
                 page,
-                (rem_x, insert_y),
+                (insert_x, insert_y_line2),
                 remarks_text,
                 fontname=fontname,
                 fontsize=font_size,
