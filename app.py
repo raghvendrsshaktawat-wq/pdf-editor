@@ -1,5 +1,5 @@
 # ==========================
-# 📝 WCS Editor (v26 - Add direct download buttons)
+# 📝 WCS Editor (v27 - Conditional Formatting + Improved UI + Logo)
 # ==========================
 
 import streamlit as st
@@ -10,7 +10,18 @@ import re
 import zipfile
 from datetime import datetime
 
-# Regex: sales line = 0xxx, qty = 1, then height + width
+# Fenesta Brand Colors
+FENESTA_BLUE = "#003087"
+FENESTA_RED = "#D32F2F"
+FENESTA_LIGHT_BLUE = "#4FC3F7"
+FENESTA_WHITE = "#FFFFFF"
+
+# Logo (Base64 encoded Fenesta logo - replace with your actual logo)
+LOGO_BASE64 = """
+data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...[Your Fenesta logo base64 here]
+"""
+
+# Regex pattern
 pattern = re.compile(
     r"^\s*(0\d{3})\s*?\n"
     r"^\s*1\s*?\n"
@@ -19,6 +30,7 @@ pattern = re.compile(
     re.MULTILINE
 )
 
+@st.cache_data
 def extract_sales_blocks(pdf_file):
     doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
     text = ""
@@ -30,8 +42,8 @@ def extract_sales_blocks(pdf_file):
 
     for match in pattern.finditer(text):
         sales_line = match.group(1)
-        order_height = int(match.group(2))  # swapped
-        order_width = int(match.group(3))   # swapped
+        order_height = int(match.group(2))
+        order_width = int(match.group(3))
 
         start_idx = text[:match.start()].count("\n")
         for j in range(start_idx, min(start_idx + 100, len(lines))):
@@ -58,17 +70,15 @@ def extract_sales_blocks(pdf_file):
             "location_input": "",
             "remarks": ""
         })
-
     return blocks
 
 def update_pdf(pdf_bytes, entries):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-
     base_offset_x = 40
     base_offset_y = 10
     spacing1 = 120
     spacing2 = 80
-    font_size = 14   # locked font size
+    font_size = 14
 
     aperture_positions = []
     for page_num, page in enumerate(doc):
@@ -87,15 +97,20 @@ def update_pdf(pdf_bytes, entries):
         input_w = entry.get("width")
         input_h = entry.get("height")
 
+        input_w_num = float(input_w) if input_w is not None else None
+        input_h_num = float(input_h) if input_h is not None else None
+        
         color = (0, 0, 1)
-        if order_w and input_w and abs(order_w - input_w) > 75:
+        if (order_w is not None and input_w_num is not None and 
+            abs(order_w - input_w_num) > 75):
             color = (1, 0, 0)
-        if order_h and input_h and abs(order_h - input_h) > 75:
+        if (order_h is not None and input_h_num is not None and 
+            abs(order_h - input_h_num) > 75):
             color = (1, 0, 0)
 
-        size_text = f"{input_w} x {input_h}"
-        location_text = f"({entry['location_input']})"
-        remarks_text = f"{entry['remarks']}" if entry.get("remarks") else ""
+        size_text = f"{input_w_num:.0f} x {input_h_num:.0f}" if input_w_num and input_h_num else "N/A"
+        location_text = f"({entry.get('location_input', '')})"
+        remarks_text = entry.get("remarks", "")
 
         insert_x = inst.x1 + base_offset_x
         insert_y = inst.y0 + base_offset_y
@@ -122,119 +137,207 @@ def make_excel_safe_name(name):
     safe = "".join(c if c.isalnum() else "_" for c in name)[:31]
     return safe if safe else "Sheet"
 
+# ----------------- Enhanced Streamlit UI -----------------
+st.set_page_config(page_title="WCS Editor", layout="wide", page_icon="📝")
 
-# ----------------- Streamlit UI -----------------
-st.title("📝 WCS Editor")
+# Header with Logo & Branding
+col1, col2, col3 = st.columns([1, 2, 1])
+with col1:
+    st.empty()
+with col2:
+    st.image(LOGO_BASE64 if 'LOGO_BASE64' in locals() else "https://via.placeholder.com/200x60/003087/FFFFFF?text=Fenesta", width=200)
+with col3:
+    st.empty()
 
-uploaded_pdfs = st.file_uploader("Upload one or more Survey Sheet PDFs", type="pdf", accept_multiple_files=True)
+st.markdown(f"""
+    <h1 style='text-align: center; color: {FENESTA_BLUE}; margin-bottom: 0.5rem;'>📝 WCS Editor Pro</h1>
+    <p style='text-align: center; color: {FENESTA_LIGHT_BLUE}; font-size: 1.1rem;'>Smart PDF Survey Sheet Editor with Auto-Highlighting</p>
+""", unsafe_allow_html=True)
 
-if uploaded_pdfs:
-    file_name_prefix = st.text_input("📂 Excel/ZIP file name prefix (without extension)", value="output")
+# Metrics Row
+col1, col2, col3, col4 = st.columns(4)
+total_files = len(st.session_state.get('processed_files', [])) if 'processed_files' in st.session_state else 0
+col1.metric("📄 Files Ready", total_files)
+col2.metric("✅ Auto-Highlight", "75mm Δ")
+col3.metric("🎨 Fenesta Colors", "Blue/Red")
+col4.metric("📦 ZIP Export", "Multi-file")
 
-    per_file_data = []
-    pdf_results = []
-    used_names = set()
-    all_unique = True
+st.divider()
 
-    # Loop over each uploaded PDF
-    for i, uploaded_pdf in enumerate(uploaded_pdfs, start=1):
-        st.write(f"---")
-        st.write(f"### 📄 File {i}: {uploaded_pdf.name}")
+# Main Content
+tab1, tab2 = st.tabs(["📤 Upload & Edit", "ℹ️ Instructions"])
 
-        # User renames output PDF
-        custom_pdf_name = st.text_input(
-            f"Rename output PDF for file {i}",
-            value=f"{uploaded_pdf.name.replace('.pdf','')}_edited",
-            key=f"rename_{i}"
+with tab1:
+    uploaded_pdfs = st.file_uploader(
+        "Upload Survey Sheet PDFs", 
+        type="pdf", 
+        accept_multiple_files=True,
+        help="Supports multiple PDFs - will create separate sheets for each"
+    )
+
+    if uploaded_pdfs:
+        st.success(f"✅ Loaded {len(uploaded_pdfs)} file(s)")
+        
+        file_name_prefix = st.text_input(
+            "📂 Output file prefix", 
+            value="WCS_Edited",
+            help="Name for Excel/ZIP files (no extension needed)"
         )
 
-        if custom_pdf_name in used_names:
-            st.error(f"❌ The name '{custom_pdf_name}' is already used. Please choose a unique name.")
-            all_unique = False
-        else:
-            used_names.add(custom_pdf_name)
+        per_file_data = []
+        pdf_results = []
+        used_names = set()
+        all_unique = True
 
-            # Extract sales data
-            sales_data = extract_sales_blocks(uploaded_pdf)
-            if len(sales_data) == 0:
-                st.warning(f"⚠️ No sales lines found in {uploaded_pdf.name}")
-                continue
+        for i, uploaded_pdf in enumerate(uploaded_pdfs, start=1):
+            with st.expander(f"📄 File {i}: {uploaded_pdf.name}", expanded=True):
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    custom_pdf_name = st.text_input(
+                        f"Output PDF name",
+                        value=f"{uploaded_pdf.name.replace('.pdf','')}_edited",
+                        key=f"rename_{i}",
+                        help="Unique name for this PDF output"
+                    )
+                with col2:
+                    if st.button(f"🔄 Re-extract", key=f"reextract_{i}"):
+                        st.cache_data.clear()
+                        st.rerun()
 
-            df = pd.DataFrame(sales_data)[[
-                "sales_line","order_width","order_height","reference","location","system",
-                "width","height","location_input","remarks"
-            ]]
+                if custom_pdf_name in used_names:
+                    st.error(f"❌ Duplicate name '{custom_pdf_name}'")
+                    all_unique = False
+                    continue
+                used_names.add(custom_pdf_name)
 
-            edited_df = st.data_editor(
-                df,
-                num_rows="fixed",
-                use_container_width=True,
-                hide_index=True,   # hide index
-                key=f"editor_{i}",
-                column_config={
-                    "sales_line": st.column_config.TextColumn(disabled=True),
-                    "order_width": st.column_config.NumberColumn(disabled=True),
-                    "order_height": st.column_config.NumberColumn(disabled=True),
-                    "reference": st.column_config.TextColumn(disabled=True),
-                    "location": st.column_config.TextColumn(disabled=True),
-                    "system": st.column_config.TextColumn(disabled=True),
-                    "width": st.column_config.NumberColumn("Width (input)", step=1),
-                    "height": st.column_config.NumberColumn("Height (input)", step=1),
-                    "location_input": st.column_config.TextColumn("Location (input)"),
-                    "remarks": st.column_config.TextColumn("Remarks")
-                }
-            )
+                # Extract & Display Data
+                sales_data = extract_sales_blocks(uploaded_pdf)
+                if not sales_data:
+                    st.warning("⚠️ No sales lines found")
+                    continue
 
-            sheet_name = make_excel_safe_name(custom_pdf_name)
-            per_file_data.append((sheet_name, edited_df))
+                df = pd.DataFrame(sales_data)
 
-            uploaded_pdf.seek(0)
-            edited_pdf = update_pdf(
-                uploaded_pdf.read(),
-                edited_df.to_dict("records")
-            )
-            pdf_results.append((custom_pdf_name, edited_pdf))
+                # Conditional column config with highlighting
+                def width_color(row):
+                    if pd.isna(row['width']) or row['order_width'] is None:
+                        return ""
+                    diff = abs(row['order_width'] - row['width'])
+                    return FENESTA_RED if diff > 75 else FENESTA_LIGHT_BLUE
 
-    # ========== DOWNLOAD SECTION ==========
+                def height_color(row):
+                    if pd.isna(row['height']) or row['order_height'] is None:
+                        return ""
+                    diff = abs(row['order_height'] - row['height'])
+                    return FENESTA_RED if diff > 75 else FENESTA_LIGHT_BLUE
 
-    # 1. ZIP download
-    if all_unique and st.button("📦 Save"):
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w") as zf:
-            # Excel with multiple sheets
-            if per_file_data:
-                excel_file = io.BytesIO()
-                with pd.ExcelWriter(excel_file, engine="openpyxl") as writer:
-                    for sheet_name, df_part in per_file_data:
-                        df_part.to_excel(writer, index=False, sheet_name=sheet_name)
-                excel_file.seek(0)
-                zf.writestr(f"{file_name_prefix}.xlsx", excel_file.getvalue())
-            # PDFs
-            for pdf_name, pdf_bytes in pdf_results:
-                zf.writestr(f"{pdf_name}.pdf", pdf_bytes)
+                edited_df = st.data_editor(
+                    df,
+                    num_rows="fixed",
+                    width='stretch',
+                    hide_index=True,
+                    key=f"editor_{i}",
+                    column_config={
+                        "sales_line": st.column_config.TextColumn("Sales Line", disabled=True, width="small"),
+                        "order_width": st.column_config.NumberColumn("Order W", disabled=True, width="small", format="%.0f mm"),
+                        "order_height": st.column_config.NumberColumn("Order H", disabled=True, width="small", format="%.0f mm"),
+                        "reference": st.column_config.TextColumn("Reference", disabled=True),
+                        "location": st.column_config.TextColumn("Location", disabled=True),
+                        "system": st.column_config.TextColumn("System", disabled=True, width="small"),
+                        "width": st.column_config.NumberColumn(
+                            "Input Width", 
+                            step=1, 
+                            format="%.0f mm",
+                            cell_background_color=width_color
+                        ),
+                        "height": st.column_config.NumberColumn(
+                            "Input Height", 
+                            step=1, 
+                            format="%.0f mm",
+                            cell_background_color=height_color
+                        ),
+                        "location_input": st.column_config.TextColumn("Location (Input)"),
+                        "remarks": st.column_config.TextColumn("Remarks")
+                    }
+                )
 
-        zip_buffer.seek(0)
-        today_str = datetime.today().strftime("%Y-%m-%d")
-        zip_name = f"{file_name_prefix}_{today_str}_all.zip"
-        st.success("✅ ZIP file ready for download")
-        st.download_button("⬇️ Download All Files (ZIP)",
-                           data=zip_buffer, file_name=zip_name, mime="application/zip")
+                # Show mismatch summary
+                edited_df['w_diff'] = abs(edited_df['order_width'] - edited_df['width'].fillna(0))
+                edited_df['h_diff'] = abs(edited_df['order_height'] - edited_df['height'].fillna(0))
+                mismatches = ((edited_df['w_diff'] > 75) | (edited_df['h_diff'] > 75)).sum()
+                
+                col1, col2 = st.columns(2)
+                col1.metric("🔴 Mismatches (>75mm)", mismatches, delta=None)
+                col2.metric("✅ Matches", len(edited_df) - mismatches, delta=None)
 
-    # 2. Direct download section
-    if all_unique and per_file_data:
-        st.write("---")
-        st.subheader("📥 Direct Downloads (No ZIP)")
+                sheet_name = make_excel_safe_name(custom_pdf_name)
+                per_file_data.append((sheet_name, edited_df))
+                
+                uploaded_pdf.seek(0)
+                edited_pdf = update_pdf(uploaded_pdf.read(), edited_df.to_dict("records"))
+                pdf_results.append((custom_pdf_name, edited_pdf))
 
-        # Excel direct
-        excel_file = io.BytesIO()
-        with pd.ExcelWriter(excel_file, engine="openpyxl") as writer:
-            for sheet_name, df_part in per_file_data:
-                df_part.to_excel(writer, index=False, sheet_name=sheet_name)
-        excel_file.seek(0)
-        st.download_button("⬇️ Download Excel Only",
-                           data=excel_file, file_name=f"{file_name_prefix}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        # Download Section
+        if all_unique and per_file_data:
+            st.subheader("📥 Download Options")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("📦 Download All (ZIP)", type="primary", use_container_width=True):
+                    zip_buffer = io.BytesIO()
+                    with zipfile.ZipFile(zip_buffer, "w") as zf:
+                        excel_file = io.BytesIO()
+                        with pd.ExcelWriter(excel_file, engine="openpyxl") as writer:
+                            for sheet_name, df_part in per_file_data:
+                                df_part.to_excel(writer, index=False, sheet_name=sheet_name)
+                        excel_file.seek(0)
+                        zf.writestr(f"{file_name_prefix}.xlsx", excel_file.getvalue())
+                        
+                        for pdf_name, pdf_bytes in pdf_results:
+                            zf.writestr(f"{pdf_name}.pdf", pdf_bytes)
+                    
+                    zip_buffer.seek(0)
+                    today_str = datetime.today().strftime("%Y-%m-%d")
+                    st.download_button(
+                        "⬇️ ZIP Complete Package",
+                        zip_buffer.getvalue(),
+                        f"{file_name_prefix}_{today_str}.zip",
+                        "application/zip"
+                    )
+            
+            with col2:
+                # Individual downloads
+                for pdf_name, pdf_bytes in pdf_results:
+                    st.download_button(
+                        f"📄 {pdf_name}.pdf",
+                        pdf_bytes,
+                        f"{pdf_name}.pdf",
+                        "application/pdf"
+                    )
 
-        # PDFs direct
-        for pdf_name, pdf_bytes in pdf_results:
-            st.download_button(f"⬇️ Download {pdf_name}.pdf",
-                               data=pdf_bytes, file_name=f"{pdf_name}.pdf", mime="application/pdf")
+with tab2:
+    st.markdown("""
+    ## 🎯 How to Use WCS Editor Pro
+    
+    ### 1. **Upload PDFs**
+    - Upload one or more Survey Sheet PDFs
+    - Each file gets its own editable sheet
+    
+    ### 2. **Smart Editing** 
+    - **🔴 Red cells** = Difference >75mm from order sizes
+    - **🔵 Light blue** = Within tolerance 
+    - Edit **Width**, **Height**, **Location**, **Remarks**
+    
+    ### 3. **Auto-Validation**
+    - Real-time mismatch counter
+    - PDF annotations match editor colors
+    
+    ### 4. **Export Options**
+    - 📦 **ZIP**: Excel (multi-sheet) + All PDFs
+    - 📄 **Individual PDFs** for selective download
+    
+    **Pro Tip**: Use unique PDF names to avoid conflicts!
+    """)
+
+st.markdown("---")
+st.markdown(f"**© Fenesta Building Systems** | Powered by Streamlit | v27", unsafe_allow_html=True)
