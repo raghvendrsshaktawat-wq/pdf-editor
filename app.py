@@ -1,5 +1,5 @@
 # ==========================
-# WCS Survey Editor (v43 - Debug Mode + Fallback Positioning)
+# WCS Survey Editor (v44 - Fixed Excel Export)
 # ==========================
 
 import streamlit as st
@@ -70,10 +70,9 @@ def safe_float_convert(val):
         return None
 
 def get_fontname_for_page(page):
-    return "tiro"  # Times-Roman
+    return "tiro"
 
-def draw_text_with_white_bg(page, point, text, fontname, fontsize, color, debug=False):
-    """Draw white background + text. Debug mode logs to console."""
+def draw_text_with_white_bg(page, point, text, fontname, fontsize, color):
     if not text:
         return
 
@@ -97,15 +96,8 @@ def draw_text_with_white_bg(page, point, text, fontname, fontsize, color, debug=
         color=color,
         render_mode=0,
     )
-    
-    if debug:
-        print(f"✓ Drew text: {text[:50]} at ({x}, {y})")
 
 def update_pdf(pdf_bytes, entries, surveyor_name=None):
-    """
-    Update PDF with survey data.
-    If no "Aperture Size" anchor found, uses fallback positioning on page 1.
-    """
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     base_offset_x = 40
     font_size = 14
@@ -145,14 +137,10 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
         for inst in rects1 + rects2 + rects3:
             aperture_positions.append((page_num, inst))
 
-    print(f"DEBUG: Found {len(aperture_positions)} 'Aperture Size' anchors")
-
-    # FALLBACK: If no anchors found, use bottom-right of page 1
+    # FALLBACK: If no anchors found, use bottom area of page 1
     if not aperture_positions and len(entries) > 0:
-        print("⚠ WARNING: No 'Aperture Size' anchors found. Using fallback positioning.")
         page = doc[0]
         page_rect = page.mediabox
-        # Position text near bottom-right
         fallback_x = page_rect.width - 300
         fallback_y = page_rect.height - 100
         
@@ -209,7 +197,6 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
             fontname=fontname,
             fontsize=font_size,
             color=color,
-            debug=True,
         )
 
         # Line 2: Remarks (only if not empty)
@@ -221,7 +208,6 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
                 fontname=fontname,
                 fontsize=font_size,
                 color=color,
-                debug=True,
             )
 
     out_bytes = io.BytesIO()
@@ -255,6 +241,22 @@ def build_ref_summary(df):
     )
     summary_with_total = pd.concat([summary, total_row])
     return summary_with_total.reset_index().rename(columns={"index": "Ref"})
+
+def clean_dataframe_for_excel(df):
+    """
+    Convert width/height from arrays/lists to scalars.
+    Handles case where st.data_editor returns NumberColumn as arrays. [web:81]
+    """
+    df_clean = df.copy()
+    
+    # Flatten width and height columns if they contain arrays/lists
+    for col in ["width", "height"]:
+        if col in df_clean.columns:
+            df_clean[col] = df_clean[col].apply(
+                lambda x: x[0] if isinstance(x, (list, np.ndarray)) and len(x) > 0 else x
+            )
+    
+    return df_clean
 
 # ==== UI ====
 st.set_page_config(
@@ -372,12 +374,14 @@ if uploaded_pdfs:
             summary_df = build_ref_summary(edited_df)
             st.dataframe(summary_df, hide_index=True, use_container_width=False)
 
+            # Clean dataframe for Excel export
+            edited_df_clean = clean_dataframe_for_excel(edited_df)
+
             # Store for combined Excel
             sheet_name = make_excel_safe_name(custom_pdf_name)
-            per_file_data.append((sheet_name, edited_df, custom_pdf_name, surveyor_name))
+            per_file_data.append((sheet_name, edited_df_clean, custom_pdf_name, surveyor_name))
 
-            # Generate PDF with debug output
-            st.info("Generating PDF with debug output (check terminal logs)...")
+            # Generate PDF
             uploaded_pdf.seek(0)
             edited_pdf = update_pdf(
                 uploaded_pdf.read(),
@@ -435,4 +439,3 @@ else:
 
 st.divider()
 st.caption("Red text in PDF indicates >75 mm difference from order sizes.")
-st.caption("Debug output appears in terminal/logs.")
