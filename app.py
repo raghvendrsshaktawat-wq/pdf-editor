@@ -86,7 +86,7 @@ def extract_editor_value(val):
 def get_fontname_for_page(page):
     return "tiro"
 
-def draw_text_with_colored_border(page, point, text, fontname, fontsize, color, border_color=(0,0,1), border_width=1.5):
+def draw_text_with_colored_border(page, point, text, fontname, fontsize, color, border_color=(0,0,1), border_width=1.8):
     """
     Draw colored border → white fill → text.
     border_color: (1,0,0)=RED, (0,0,1)=BLUE
@@ -96,7 +96,7 @@ def draw_text_with_colored_border(page, point, text, fontname, fontsize, color, 
 
     x, y = point
     box_width = 350
-    box_height = fontsize * 2
+    box_height = fontsize * 1.6
 
     # Box coordinates (y is baseline, move up for full coverage)
     rect = fitz.Rect(
