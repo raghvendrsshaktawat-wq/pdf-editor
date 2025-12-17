@@ -196,7 +196,7 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
         remarks_text = (entry.get("remarks") or "").strip()
 
         insert_x = inst.x1 + base_offset_x
-        insert_y = inst.y0 + 2
+        insert_y = inst.y0 + 4
 
         line1_text = f"{location_input} : {size_text}"
 
