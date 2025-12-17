@@ -96,7 +96,7 @@ def draw_text_with_colored_border(page, point, text, fontname, fontsize, color, 
 
     x, y = point
     box_width = 350
-    box_height = fontsize * 1.6
+    box_height = fontsize * 2
 
     # Box coordinates (y is baseline, move up for full coverage)
     rect = fitz.Rect(
