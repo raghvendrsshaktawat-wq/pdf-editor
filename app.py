@@ -1,5 +1,5 @@
 # ==========================
-# WCS Survey Editor (v42 - Location : Width x Height + Remarks on second line)
+# WCS Survey Editor (v43 - Debug Mode + Fallback Positioning)
 # ==========================
 
 import streamlit as st
@@ -70,32 +70,25 @@ def safe_float_convert(val):
         return None
 
 def get_fontname_for_page(page):
-    # Use built-in Times-Roman family (PyMuPDF alias 'tiro'). [web:15]
-    return "tiro"
+    return "tiro"  # Times-Roman
 
-def draw_text_with_white_bg(page, point, text, fontname, fontsize, color):
-    """
-    Draw a white rectangle behind the text, then draw the text.
-    Uses a fixed-width white box; height tuned to avoid overlap between two lines. [web:57]
-    """
+def draw_text_with_white_bg(page, point, text, fontname, fontsize, color, debug=False):
+    """Draw white background + text. Debug mode logs to console."""
     if not text:
         return
 
     x, y = point
-
-    # Make box wider and higher to safely contain text
     box_width = 260
     box_height = fontsize * 1.6
 
-    # y is the text baseline; move rect up a bit and cover enough vertical space
     bg_rect = fitz.Rect(
         x - 2,
         y - fontsize * 1.3,
         x - 2 + box_width,
         y - fontsize * 1.3 + box_height,
     )
+    
     page.draw_rect(bg_rect, color=(1, 1, 1), fill=(1, 1, 1), width=0)
-
     page.insert_text(
         (x, y),
         text,
@@ -104,19 +97,26 @@ def draw_text_with_white_bg(page, point, text, fontname, fontsize, color):
         color=color,
         render_mode=0,
     )
+    
+    if debug:
+        print(f"✓ Drew text: {text[:50]} at ({x}, {y})")
 
 def update_pdf(pdf_bytes, entries, surveyor_name=None):
+    """
+    Update PDF with survey data.
+    If no "Aperture Size" anchor found, uses fallback positioning on page 1.
+    """
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     base_offset_x = 40
     font_size = 14
-    line_spacing = int(font_size * 1.6)  # safer vertical distance between line 1 and 2
+    line_spacing = int(font_size * 1.6)
 
-    # ===== Surveyor Name: SECOND "Name" label =====
+    # ===== Surveyor Name =====
     if surveyor_name:
         for page in doc:
             name_rects = page.search_for("Name")
             if len(name_rects) >= 2:
-                name_rect = name_rects[1]  # second Name
+                name_rect = name_rects[1]
             elif len(name_rects) == 1:
                 name_rect = name_rects[0]
             else:
@@ -145,6 +145,20 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
         for inst in rects1 + rects2 + rects3:
             aperture_positions.append((page_num, inst))
 
+    print(f"DEBUG: Found {len(aperture_positions)} 'Aperture Size' anchors")
+
+    # FALLBACK: If no anchors found, use bottom-right of page 1
+    if not aperture_positions and len(entries) > 0:
+        print("⚠ WARNING: No 'Aperture Size' anchors found. Using fallback positioning.")
+        page = doc[0]
+        page_rect = page.mediabox
+        # Position text near bottom-right
+        fallback_x = page_rect.width - 300
+        fallback_y = page_rect.height - 100
+        
+        for idx in range(len(entries)):
+            aperture_positions.append((0, fitz.Rect(fallback_x, fallback_y + (idx * 40), fallback_x + 250, fallback_y + (idx * 40) + 20)))
+
     # ===== Write each row =====
     for idx, entry in enumerate(entries):
         if idx >= len(aperture_positions):
@@ -163,14 +177,14 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
         order_w = safe_float_convert(entry.get("order_width"))
         order_h = safe_float_convert(entry.get("order_height"))
 
-        # color: only when survey values exist and differ > 75 from order
+        # color logic
         color = (0, 0, 1)  # blue
         if survey_w is not None and order_w is not None and abs(order_w - survey_w) > 75:
             color = (1, 0, 0)
         if survey_h is not None and order_h is not None and abs(order_h - survey_h) > 75:
             color = (1, 0, 0)
 
-        # size text: use SURVEY values only; if either missing, show nothing
+        # size text
         if survey_w is not None and survey_h is not None:
             size_text = f"{survey_w:.0f} x {survey_h:.0f}"
         else:
@@ -180,9 +194,9 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
         remarks_text = (entry.get("remarks") or "").strip()
 
         insert_x = inst.x1 + base_offset_x
-        insert_y = inst.y0 + 10  # slightly below anchor
+        insert_y = inst.y0 + 10
 
-        # Line 1: "Location  :  Width x Height"
+        # Line 1: Location : Size
         if size_text:
             line1_text = f"{location_input} : {size_text}"
         else:
@@ -195,9 +209,10 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
             fontname=fontname,
             fontsize=font_size,
             color=color,
+            debug=True,
         )
 
-        # Line 2: remarks ONLY if not empty
+        # Line 2: Remarks (only if not empty)
         if remarks_text:
             draw_text_with_white_bg(
                 page,
@@ -206,6 +221,7 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
                 fontname=fontname,
                 fontsize=font_size,
                 color=color,
+                debug=True,
             )
 
     out_bytes = io.BytesIO()
@@ -360,7 +376,8 @@ if uploaded_pdfs:
             sheet_name = make_excel_safe_name(custom_pdf_name)
             per_file_data.append((sheet_name, edited_df, custom_pdf_name, surveyor_name))
 
-            # Generate PDF
+            # Generate PDF with debug output
+            st.info("Generating PDF with debug output (check terminal logs)...")
             uploaded_pdf.seek(0)
             edited_pdf = update_pdf(
                 uploaded_pdf.read(),
@@ -418,3 +435,4 @@ else:
 
 st.divider()
 st.caption("Red text in PDF indicates >75 mm difference from order sizes.")
+st.caption("Debug output appears in terminal/logs.")
