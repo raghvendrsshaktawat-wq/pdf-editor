@@ -1,5 +1,5 @@
 # ==========================
-# WCS Survey Editor (v45 - ALWAYS show Width x Height)
+# WCS Survey Editor (v46 - Fixed Data Flow)
 # ==========================
 
 import streamlit as st
@@ -61,12 +61,32 @@ def extract_sales_blocks(pdf_file):
         })
     return blocks
 
-def safe_float_convert(val):
+def extract_editor_value(val):
+    """
+    FIXED: Properly extract scalar from st.data_editor NumberColumn values.
+    Handles lists, arrays, dicts, nested structures.
+    """
     if pd.isna(val) or val is None or val == "":
         return None
+    
+    # Handle list/array from NumberColumn
+    if isinstance(val, (list, np.ndarray)):
+        if len(val) > 0:
+            val = val[0]
+        else:
+            return None
+    
+    # Handle dict/object structures
+    if isinstance(val, dict):
+        if 'value' in val:
+            val = val['value']
+        elif len(val) > 0:
+            val = list(val.values())[0]
+    
+    # Final float conversion
     try:
         return float(val)
-    except:
+    except (ValueError, TypeError):
         return None
 
 def get_fontname_for_page(page):
@@ -156,16 +176,16 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
         page = doc[page_num]
         fontname = get_fontname_for_page(page)
 
-        survey_w_raw = entry.get("width")
-        survey_h_raw = entry.get("height")
+        # FIXED: Use new extract_editor_value()
+        survey_w = extract_editor_value(entry.get("width"))
+        survey_h = extract_editor_value(entry.get("height"))
+        order_w = extract_editor_value(entry.get("order_width"))
+        order_h = extract_editor_value(entry.get("order_height"))
 
-        survey_w = safe_float_convert(survey_w_raw)
-        survey_h = safe_float_convert(survey_h_raw)
+        # Debug: Print what we actually got
+        print(f"ROW {idx}: w={survey_w}, h={survey_h}, order_w={order_w}, order_h={order_h}")
 
-        order_w = safe_float_convert(entry.get("order_width"))
-        order_h = safe_float_convert(entry.get("order_height"))
-
-        # FIXED: Always create size_text - show partial/missing values
+        # Always create size_text
         if survey_w is not None and survey_h is not None:
             size_text = f"{survey_w:.0f} x {survey_h:.0f}"
         elif survey_w is not None:
@@ -175,8 +195,8 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
         else:
             size_text = "-- x --"
 
-        # color logic (only when BOTH values exist for comparison)
-        color = (0, 0, 1)  # blue default
+        # Color logic (only when BOTH values exist)
+        color = (0, 0, 1)  # blue
         if survey_w is not None and survey_h is not None:
             if order_w is not None and abs(order_w - survey_w) > 75:
                 color = (1, 0, 0)
@@ -189,7 +209,6 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
         insert_x = inst.x1 + base_offset_x
         insert_y = inst.y0 + 10
 
-        # Line 1: ALWAYS "Location : Width x Height"
         line1_text = f"{location_input} : {size_text}"
 
         draw_text_with_white_bg(
@@ -201,7 +220,6 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
             color=color,
         )
 
-        # Line 2: Remarks (only if not empty)
         if remarks_text:
             draw_text_with_white_bg(
                 page,
@@ -238,16 +256,14 @@ def build_ref_summary(df):
     return summary_with_total.reset_index().rename(columns={"index": "Ref"})
 
 def clean_dataframe_for_excel(df):
-    """Flatten width/height arrays for Excel export."""
+    """Flatten width/height for Excel using same logic as PDF."""
     df_clean = df.copy()
     for col in ["width", "height"]:
         if col in df_clean.columns:
-            df_clean[col] = df_clean[col].apply(
-                lambda x: x[0] if isinstance(x, (list, np.ndarray)) and len(x) > 0 else x
-            )
+            df_clean[col] = df_clean[col].apply(extract_editor_value)
     return df_clean
 
-# ==== UI ====
+# ==== UI ==== (same as before)
 st.set_page_config(
     page_title="WCS Survey Editor",
     layout="wide",
@@ -258,7 +274,6 @@ st.title("WCS Survey Editor")
 st.markdown("Edit survey dimensions. Red text in PDF output indicates >75 mm differences.")
 st.divider()
 
-# Sidebar
 with st.sidebar:
     st.header("Instructions")
     st.markdown("""
@@ -270,10 +285,8 @@ with st.sidebar:
     st.divider()
     st.caption("Fenesta Building Systems")
 
-# Input: Lot name
 lot_name = st.text_input("Lot Name (optional):", value="", placeholder="Enter lot name")
 
-# File upload
 uploaded_pdfs = st.file_uploader(
     "Upload Survey Sheet PDFs",
     type="pdf",
@@ -289,21 +302,15 @@ if uploaded_pdfs:
 
     for i, uploaded_pdf in enumerate(uploaded_pdfs, 1):
         with st.expander(f"{uploaded_pdf.name}", expanded=(i == 1)):
-            surveyor_name = st.text_input(
-                "Surveyor Name",
-                value="",
-                key=f"surveyor_{i}",
-            )
-
+            surveyor_name = st.text_input("Surveyor Name", value="", key=f"surveyor_{i}")
+            
             col1, col2 = st.columns([4, 1])
-
             with col1:
                 custom_pdf_name = st.text_input(
                     "Output PDF name",
                     value=f"{uploaded_pdf.name.replace('.pdf', '')}",
                     key=f"name_{i}",
                 )
-
             with col2:
                 if st.button("Refresh", key=f"refresh_{i}"):
                     st.cache_data.clear()
@@ -331,27 +338,15 @@ if uploaded_pdfs:
                 use_container_width=True,
                 key=f"editor_{i}",
                 column_config={
-                    "sales_line": st.column_config.TextColumn(
-                        "Sales Line", disabled=True, width="small"
-                    ),
-                    "order_width": st.column_config.NumberColumn(
-                        "Order W", disabled=True, width="small"
-                    ),
-                    "order_height": st.column_config.NumberColumn(
-                        "Order H", disabled=True, width="small"
-                    ),
+                    "sales_line": st.column_config.TextColumn("Sales Line", disabled=True, width="small"),
+                    "order_width": st.column_config.NumberColumn("Order W", disabled=True, width="small"),
+                    "order_height": st.column_config.NumberColumn("Order H", disabled=True, width="small"),
                     "reference": st.column_config.TextColumn("Ref", disabled=True),
                     "location": st.column_config.TextColumn("Location", disabled=True),
                     "system": st.column_config.TextColumn("System", disabled=True),
-                    "width": st.column_config.NumberColumn(
-                        "Input Width (mm)", step=1, width="medium"
-                    ),
-                    "height": st.column_config.NumberColumn(
-                        "Input Height (mm)", step=1, width="medium"
-                    ),
-                    "location_input": st.column_config.TextColumn(
-                        "Location", width="medium"
-                    ),
+                    "width": st.column_config.NumberColumn("Input Width (mm)", step=1, width="medium"),
+                    "height": st.column_config.NumberColumn("Input Height (mm)", step=1, width="medium"),
+                    "location_input": st.column_config.TextColumn("Location", width="medium"),
                     "remarks": st.column_config.TextColumn("Remarks"),
                 },
             )
@@ -360,10 +355,13 @@ if uploaded_pdfs:
             summary_df = build_ref_summary(edited_df)
             st.dataframe(summary_df, hide_index=True, use_container_width=False)
 
+            # Clean for Excel
             edited_df_clean = clean_dataframe_for_excel(edited_df)
             sheet_name = make_excel_safe_name(custom_pdf_name)
             per_file_data.append((sheet_name, edited_df_clean, custom_pdf_name, surveyor_name))
 
+            # Generate PDF - check terminal for ROW debug output
+            st.info("Check terminal for ROW debug output to verify values...")
             uploaded_pdf.seek(0)
             edited_pdf = update_pdf(
                 uploaded_pdf.read(),
@@ -397,7 +395,7 @@ if uploaded_pdfs:
         )
 
         st.subheader("Individual PDFs")
-        for pdf_name, pdf_bytes, surveyor_name in pdf_results:
+        for pdf_name, pdf_bytes, _ in pdf_results:
             if lot_name:
                 base = f"{lot_name}_{pdf_name}"
             else:
