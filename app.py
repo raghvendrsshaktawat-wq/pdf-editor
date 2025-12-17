@@ -95,7 +95,7 @@ def draw_text_with_colored_border(page, point, text, fontname, fontsize, color, 
         return
 
     x, y = point
-    box_width = 260
+    box_width = 400
     box_height = fontsize * 1.6
 
     # Box coordinates (y is baseline, move up for full coverage)
