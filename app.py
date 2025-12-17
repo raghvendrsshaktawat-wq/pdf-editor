@@ -1,5 +1,5 @@
 # ==========================
-# WCS Survey Editor (v46 - Fixed Data Flow)
+# WCS Survey Editor (v47 - Colored Borders)
 # ==========================
 
 import streamlit as st
@@ -62,28 +62,22 @@ def extract_sales_blocks(pdf_file):
     return blocks
 
 def extract_editor_value(val):
-    """
-    FIXED: Properly extract scalar from st.data_editor NumberColumn values.
-    Handles lists, arrays, dicts, nested structures.
-    """
+    """Extract scalar from st.data_editor NumberColumn values."""
     if pd.isna(val) or val is None or val == "":
         return None
     
-    # Handle list/array from NumberColumn
     if isinstance(val, (list, np.ndarray)):
         if len(val) > 0:
             val = val[0]
         else:
             return None
     
-    # Handle dict/object structures
     if isinstance(val, dict):
         if 'value' in val:
             val = val['value']
         elif len(val) > 0:
             val = list(val.values())[0]
     
-    # Final float conversion
     try:
         return float(val)
     except (ValueError, TypeError):
@@ -92,7 +86,11 @@ def extract_editor_value(val):
 def get_fontname_for_page(page):
     return "tiro"
 
-def draw_text_with_white_bg(page, point, text, fontname, fontsize, color):
+def draw_text_with_colored_border(page, point, text, fontname, fontsize, color, border_color=(0,0,1), border_width=1.5):
+    """
+    Draw colored border → white fill → text.
+    border_color: (1,0,0)=RED, (0,0,1)=BLUE
+    """
     if not text:
         return
 
@@ -100,14 +98,21 @@ def draw_text_with_white_bg(page, point, text, fontname, fontsize, color):
     box_width = 260
     box_height = fontsize * 1.6
 
-    bg_rect = fitz.Rect(
+    # Box coordinates (y is baseline, move up for full coverage)
+    rect = fitz.Rect(
         x - 2,
         y - fontsize * 1.3,
         x - 2 + box_width,
         y - fontsize * 1.3 + box_height,
     )
     
-    page.draw_rect(bg_rect, color=(1, 1, 1), fill=(1, 1, 1), width=0)
+    # 1. BORDER first (red/blue line)
+    page.draw_rect(rect, color=border_color, fill=None, width=border_width)
+    
+    # 2. WHITE FILL over border
+    page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1), width=0)
+    
+    # 3. TEXT on top
     page.insert_text(
         (x, y),
         text,
@@ -123,7 +128,7 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
     font_size = 14
     line_spacing = int(font_size * 1.6)
 
-    # ===== Surveyor Name =====
+    # ===== Surveyor Name (black text, no border) =====
     if surveyor_name:
         for page in doc:
             name_rects = page.search_for("Name")
@@ -138,14 +143,10 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
             text_x = name_rect.x1 + 10
             text_y = name_rect.y1 - 3
 
-            draw_text_with_white_bg(
-                page,
-                (text_x, text_y),
-                surveyor_name,
-                fontname=fontname,
-                fontsize=11,
-                color=(0, 0, 0),
-            )
+            # Simple white bg for name (no border)
+            rect = fitz.Rect(text_x-2, text_y-fontsize*1.3, text_x+150, text_y+5)
+            page.draw_rect(rect, color=(1,1,1), fill=(1,1,1), width=0)
+            page.insert_text((text_x, text_y), surveyor_name, fontsize=11, fontname=fontname, color=(0,0,0))
             break
 
     # ===== Find aperture anchor positions =====
@@ -157,13 +158,11 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
         for inst in rects1 + rects2 + rects3:
             aperture_positions.append((page_num, inst))
 
-    # FALLBACK positioning
     if not aperture_positions and len(entries) > 0:
         page = doc[0]
         page_rect = page.mediabox
         fallback_x = page_rect.width - 300
         fallback_y = page_rect.height - 100
-        
         for idx in range(len(entries)):
             aperture_positions.append((0, fitz.Rect(fallback_x, fallback_y + (idx * 40), fallback_x + 250, fallback_y + (idx * 40) + 20)))
 
@@ -176,13 +175,11 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
         page = doc[page_num]
         fontname = get_fontname_for_page(page)
 
-        # FIXED: Use new extract_editor_value()
         survey_w = extract_editor_value(entry.get("width"))
         survey_h = extract_editor_value(entry.get("height"))
         order_w = extract_editor_value(entry.get("order_width"))
         order_h = extract_editor_value(entry.get("order_height"))
 
-        # Debug: Print what we actually got
         print(f"ROW {idx}: w={survey_w}, h={survey_h}, order_w={order_w}, order_h={order_h}")
 
         # Always create size_text
@@ -195,14 +192,6 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
         else:
             size_text = "-- x --"
 
-        # Color logic (only when BOTH values exist)
-        color = (0, 0, 1)  # blue
-        if survey_w is not None and survey_h is not None:
-            if order_w is not None and abs(order_w - survey_w) > 75:
-                color = (1, 0, 0)
-            if order_h is not None and abs(order_h - survey_h) > 75:
-                color = (1, 0, 0)
-
         location_input = (entry.get("location_input") or "").strip()
         remarks_text = (entry.get("remarks") or "").strip()
 
@@ -211,23 +200,39 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
 
         line1_text = f"{location_input} : {size_text}"
 
-        draw_text_with_white_bg(
+        # COLOR LOGIC: Border + Text color
+        text_color = (0, 0, 1)  # blue text default
+        border_color = (0, 0, 1)  # blue border default
+        
+        if survey_w is not None and survey_h is not None:
+            if (order_w is not None and abs(order_w - survey_w) > 75) or \
+               (order_h is not None and abs(order_h - survey_h) > 75):
+                text_color = (1, 0, 0)   # red text
+                border_color = (1, 0, 0) # red border
+
+        # Line 1: Location : Size with colored border
+        draw_text_with_colored_border(
             page,
             (insert_x, insert_y),
             line1_text,
             fontname=fontname,
             fontsize=font_size,
-            color=color,
+            color=text_color,
+            border_color=border_color,
+            border_width=1.8
         )
 
+        # Line 2: Remarks with SAME border color
         if remarks_text:
-            draw_text_with_white_bg(
+            draw_text_with_colored_border(
                 page,
                 (insert_x, insert_y + line_spacing),
                 remarks_text,
                 fontname=fontname,
                 fontsize=font_size,
-                color=color,
+                color=text_color,
+                border_color=border_color,
+                border_width=1.8
             )
 
     out_bytes = io.BytesIO()
@@ -256,22 +261,17 @@ def build_ref_summary(df):
     return summary_with_total.reset_index().rename(columns={"index": "Ref"})
 
 def clean_dataframe_for_excel(df):
-    """Flatten width/height for Excel using same logic as PDF."""
     df_clean = df.copy()
     for col in ["width", "height"]:
         if col in df_clean.columns:
             df_clean[col] = df_clean[col].apply(extract_editor_value)
     return df_clean
 
-# ==== UI ==== (same as before)
-st.set_page_config(
-    page_title="WCS Survey Editor",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+# ==== UI ==== (unchanged from v46)
+st.set_page_config(page_title="WCS Survey Editor", layout="wide", initial_sidebar_state="expanded")
 
 st.title("WCS Survey Editor")
-st.markdown("Edit survey dimensions. Red text in PDF output indicates >75 mm differences.")
+st.markdown("Edit survey dimensions. **Red border/text = >75mm difference**. Blue = OK.")
 st.divider()
 
 with st.sidebar:
@@ -280,18 +280,15 @@ with st.sidebar:
 1. Enter lot name (optional).
 2. Upload survey sheet PDFs.
 3. For each PDF, enter Surveyor Name and edit Width / Height.
-4. Download combined Excel and individual PDFs.
+4. **Red border** = >75mm difference. **Blue border** = OK.
+5. Download combined Excel and individual PDFs.
     """)
     st.divider()
     st.caption("Fenesta Building Systems")
 
 lot_name = st.text_input("Lot Name (optional):", value="", placeholder="Enter lot name")
 
-uploaded_pdfs = st.file_uploader(
-    "Upload Survey Sheet PDFs",
-    type="pdf",
-    accept_multiple_files=True,
-)
+uploaded_pdfs = st.file_uploader("Upload Survey Sheet PDFs", type="pdf", accept_multiple_files=True)
 
 per_file_data = []
 pdf_results = []
@@ -355,13 +352,11 @@ if uploaded_pdfs:
             summary_df = build_ref_summary(edited_df)
             st.dataframe(summary_df, hide_index=True, use_container_width=False)
 
-            # Clean for Excel
             edited_df_clean = clean_dataframe_for_excel(edited_df)
             sheet_name = make_excel_safe_name(custom_pdf_name)
             per_file_data.append((sheet_name, edited_df_clean, custom_pdf_name, surveyor_name))
 
-            # Generate PDF - check terminal for ROW debug output
-            st.info("Check terminal for ROW debug output to verify values...")
+            st.info("Check terminal for ROW debug output...")
             uploaded_pdf.seek(0)
             edited_pdf = update_pdf(
                 uploaded_pdf.read(),
@@ -414,4 +409,4 @@ else:
     st.info("Upload survey sheet PDFs to start editing")
 
 st.divider()
-st.caption("Red text in PDF indicates >75 mm difference from order sizes.")
+st.caption("🔴 Red border/text = >75mm difference | 🔵 Blue border/text = Within tolerance")
