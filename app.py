@@ -1,5 +1,5 @@
 # ==========================
-# WCS Survey Editor (v50 - Adjustable Boxes)
+# WCS Survey Editor (v51 - UI Adjustable Boxes)
 # ==========================
 
 import streamlit as st
@@ -84,7 +84,8 @@ def extract_editor_value(val):
         return None
 
 def get_fontname_for_page(page):
-    return "tiro"  # Times-family built-in font [web:15]
+    # Times-family built-in font. [web:15]
+    return "tiro"
 
 def draw_text_box(
     page,
@@ -139,16 +140,18 @@ def draw_text_box(
         render_mode=0,
     )
 
-def update_pdf(pdf_bytes, entries, surveyor_name=None):
+def update_pdf(
+    pdf_bytes,
+    entries,
+    surveyor_name=None,
+    box_width=280,
+    box_height_mult=1.7,
+    border_width=1.8,
+    offset_x=40,
+    offset_y=0,
+):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     font_size = 14
-
-    # ===== Adjustable globals for boxes =====
-    BOX_WIDTH = 280          # width of both lines
-    BOX_HEIGHT_MULT = 1.7    # height = font_size * this
-    BORDER_WIDTH = 1.8       # border thickness
-    OFFSET_X = 40            # shift right from "Aperture Size" x1
-    OFFSET_Y = 0             # shift up/down from "Aperture Size" baseline
     LINE_SPACING = int(font_size * 1.6)
 
     # ===== Surveyor Name (simple white patch, no border) =====
@@ -206,7 +209,7 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
         order_w = extract_editor_value(entry.get("order_width"))
         order_h = extract_editor_value(entry.get("order_height"))
 
-        # Always create size_text
+        # Build size text
         if survey_w is not None and survey_h is not None:
             size_text = f"{survey_w:.0f} x {survey_h:.0f}"
         elif survey_w is not None:
@@ -228,8 +231,9 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
                 text_color = (1, 0, 0)
                 border_color = (1, 0, 0)
 
-        anchor_x = inst.x1          # right edge of "Aperture Size"
-        anchor_y = inst.y           # baseline of "Aperture Size"
+        # Anchor at "Aperture Size"
+        anchor_x = inst.x1          # right edge of anchor text
+        anchor_y = inst.y           # baseline of anchor text [web:15]
 
         line1_text = f"{location_input} : {size_text}"
 
@@ -242,11 +246,11 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
             fontsize=font_size,
             text_color=text_color,
             border_color=border_color,
-            border_width=BORDER_WIDTH,
-            box_width=BOX_WIDTH,
-            box_height_mult=BOX_HEIGHT_MULT,
-            offset_x=OFFSET_X,
-            offset_y=OFFSET_Y,
+            border_width=border_width,
+            box_width=box_width,
+            box_height_mult=box_height_mult,
+            offset_x=offset_x,
+            offset_y=offset_y,
         )
 
         # Line 2 (remarks)
@@ -259,11 +263,11 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
                 fontsize=font_size,
                 text_color=text_color,
                 border_color=border_color,
-                border_width=BORDER_WIDTH,
-                box_width=BOX_WIDTH,
-                box_height_mult=BOX_HEIGHT_MULT,
-                offset_x=OFFSET_X,
-                offset_y=OFFSET_Y,
+                border_width=border_width,
+                box_width=box_width,
+                box_height_mult=box_height_mult,
+                offset_x=offset_x,
+                offset_y=offset_y,
             )
 
     out_bytes = io.BytesIO()
@@ -309,19 +313,31 @@ st.title("WCS Survey Editor")
 st.markdown("Edit survey dimensions. Red border/text in PDF indicates >75 mm differences.")
 st.divider()
 
+# Sidebar
 with st.sidebar:
     st.header("Instructions")
     st.markdown("""
 1. Enter lot name (optional).
 2. Upload survey sheet PDFs.
 3. For each PDF, enter Surveyor Name and edit Width / Height.
-4. Download combined Excel and individual PDFs.
+4. Adjust box layout and download PDFs.
     """)
+
+    st.subheader("Box layout controls")
+
+    box_width = st.slider("Box width (px)", 180, 400, 280, step=10)
+    box_height_mult = st.slider("Box height factor", 1.2, 2.2, 1.7, step=0.1)
+    border_width = st.slider("Border thickness", 0.5, 4.0, 1.8, step=0.1)
+    offset_x = st.slider("X offset from anchor (px)", -40, 80, 40, step=5)
+    offset_y = st.slider("Y offset from anchor (px)", -40, 40, 0, step=2)
+
     st.divider()
     st.caption("Fenesta Building Systems")
 
+# Lot name
 lot_name = st.text_input("Lot Name (optional):", value="", placeholder="Enter lot name")
 
+# File upload
 uploaded_pdfs = st.file_uploader(
     "Upload Survey Sheet PDFs",
     type="pdf",
@@ -399,6 +415,11 @@ if uploaded_pdfs:
                 uploaded_pdf.read(),
                 edited_df.to_dict("records"),
                 surveyor_name=surveyor_name,
+                box_width=box_width,
+                box_height_mult=box_height_mult,
+                border_width=border_width,
+                offset_x=offset_x,
+                offset_y=offset_y,
             )
             pdf_results.append((custom_pdf_name, edited_pdf, surveyor_name))
 
