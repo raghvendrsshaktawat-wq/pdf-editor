@@ -124,7 +124,7 @@ def draw_text_with_colored_border(page, point, text, fontname, fontsize, color, 
 
 def update_pdf(pdf_bytes, entries, surveyor_name=None):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    base_offset_x = 38
+    base_offset_x = 40
     font_size = 14
     line_spacing = int(font_size * 1.6)
 
