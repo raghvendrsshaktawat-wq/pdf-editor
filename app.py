@@ -1,5 +1,5 @@
 # ==========================
-# WCS Survey Editor (v44 - Fixed Excel Export)
+# WCS Survey Editor (v45 - ALWAYS show Width x Height)
 # ==========================
 
 import streamlit as st
@@ -137,7 +137,7 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
         for inst in rects1 + rects2 + rects3:
             aperture_positions.append((page_num, inst))
 
-    # FALLBACK: If no anchors found, use bottom area of page 1
+    # FALLBACK positioning
     if not aperture_positions and len(entries) > 0:
         page = doc[0]
         page_rect = page.mediabox
@@ -165,18 +165,23 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
         order_w = safe_float_convert(entry.get("order_width"))
         order_h = safe_float_convert(entry.get("order_height"))
 
-        # color logic
-        color = (0, 0, 1)  # blue
-        if survey_w is not None and order_w is not None and abs(order_w - survey_w) > 75:
-            color = (1, 0, 0)
-        if survey_h is not None and order_h is not None and abs(order_h - survey_h) > 75:
-            color = (1, 0, 0)
-
-        # size text
+        # FIXED: Always create size_text - show partial/missing values
         if survey_w is not None and survey_h is not None:
             size_text = f"{survey_w:.0f} x {survey_h:.0f}"
+        elif survey_w is not None:
+            size_text = f"{survey_w:.0f} x --"
+        elif survey_h is not None:
+            size_text = f"-- x {survey_h:.0f}"
         else:
-            size_text = ""
+            size_text = "-- x --"
+
+        # color logic (only when BOTH values exist for comparison)
+        color = (0, 0, 1)  # blue default
+        if survey_w is not None and survey_h is not None:
+            if order_w is not None and abs(order_w - survey_w) > 75:
+                color = (1, 0, 0)
+            if order_h is not None and abs(order_h - survey_h) > 75:
+                color = (1, 0, 0)
 
         location_input = (entry.get("location_input") or "").strip()
         remarks_text = (entry.get("remarks") or "").strip()
@@ -184,11 +189,8 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
         insert_x = inst.x1 + base_offset_x
         insert_y = inst.y0 + 10
 
-        # Line 1: Location : Size
-        if size_text:
-            line1_text = f"{location_input} : {size_text}"
-        else:
-            line1_text = location_input
+        # Line 1: ALWAYS "Location : Width x Height"
+        line1_text = f"{location_input} : {size_text}"
 
         draw_text_with_white_bg(
             page,
@@ -218,9 +220,7 @@ def make_excel_safe_name(name):
     return "".join(c if c.isalnum() else "_" for c in name)[:31] or "Sheet"
 
 def build_ref_summary(df):
-    """Build reference summary for a single PDF: Ref | Order | Survey"""
     order_counts = df.groupby("reference", dropna=False).size().rename("Order")
-
     survey_mask = df["width"].notna() & df["height"].notna()
     survey_counts = (
         df[survey_mask]
@@ -228,34 +228,23 @@ def build_ref_summary(df):
         .size()
         .rename("Survey")
     )
-
     summary = pd.concat([order_counts, survey_counts], axis=1).fillna(0).astype(int)
     summary.index = summary.index.fillna("Unknown")
-
     total_row = pd.DataFrame(
-        {
-            "Order": [summary["Order"].sum()],
-            "Survey": [summary["Survey"].sum()],
-        },
+        {"Order": [summary["Order"].sum()], "Survey": [summary["Survey"].sum()]},
         index=["Total"],
     )
     summary_with_total = pd.concat([summary, total_row])
     return summary_with_total.reset_index().rename(columns={"index": "Ref"})
 
 def clean_dataframe_for_excel(df):
-    """
-    Convert width/height from arrays/lists to scalars.
-    Handles case where st.data_editor returns NumberColumn as arrays. [web:81]
-    """
+    """Flatten width/height arrays for Excel export."""
     df_clean = df.copy()
-    
-    # Flatten width and height columns if they contain arrays/lists
     for col in ["width", "height"]:
         if col in df_clean.columns:
             df_clean[col] = df_clean[col].apply(
                 lambda x: x[0] if isinstance(x, (list, np.ndarray)) and len(x) > 0 else x
             )
-    
     return df_clean
 
 # ==== UI ====
@@ -300,7 +289,6 @@ if uploaded_pdfs:
 
     for i, uploaded_pdf in enumerate(uploaded_pdfs, 1):
         with st.expander(f"{uploaded_pdf.name}", expanded=(i == 1)):
-            # Per-PDF surveyor name and output name
             surveyor_name = st.text_input(
                 "Surveyor Name",
                 value="",
@@ -333,7 +321,6 @@ if uploaded_pdfs:
                 st.warning("No sales lines detected in this PDF")
                 continue
 
-            # Editor
             st.markdown("Edit dimensions:")
             base_df = pd.DataFrame(sales_data)
 
@@ -369,19 +356,14 @@ if uploaded_pdfs:
                 },
             )
 
-            # Summary for this PDF
             st.markdown("Summary by Reference:")
             summary_df = build_ref_summary(edited_df)
             st.dataframe(summary_df, hide_index=True, use_container_width=False)
 
-            # Clean dataframe for Excel export
             edited_df_clean = clean_dataframe_for_excel(edited_df)
-
-            # Store for combined Excel
             sheet_name = make_excel_safe_name(custom_pdf_name)
             per_file_data.append((sheet_name, edited_df_clean, custom_pdf_name, surveyor_name))
 
-            # Generate PDF
             uploaded_pdf.seek(0)
             edited_pdf = update_pdf(
                 uploaded_pdf.read(),
@@ -390,12 +372,10 @@ if uploaded_pdfs:
             )
             pdf_results.append((custom_pdf_name, edited_pdf, surveyor_name))
 
-    # Download section
     if per_file_data:
         st.divider()
         st.header("Download Files")
 
-        # Combined Excel
         st.subheader("Combined Excel File")
         excel_file = io.BytesIO()
         with pd.ExcelWriter(excel_file, engine="openpyxl") as writer:
@@ -417,8 +397,6 @@ if uploaded_pdfs:
         )
 
         st.subheader("Individual PDFs")
-
-        # Individual PDF downloads
         for pdf_name, pdf_bytes, surveyor_name in pdf_results:
             if lot_name:
                 base = f"{lot_name}_{pdf_name}"
