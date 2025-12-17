@@ -1,5 +1,5 @@
 # ==========================
-# WCS Survey Editor (v42 - New Format: Location : Width x Height + Remarks)
+# WCS Survey Editor (v42 - Location : Width x Height + Remarks on second line)
 # ==========================
 
 import streamlit as st
@@ -70,25 +70,30 @@ def safe_float_convert(val):
         return None
 
 def get_fontname_for_page(page):
-    """
-    Use built-in Times-Roman family (PyMuPDF alias 'tiro').
-    This requires no external font files.
-    """
-    return "tiro"  # Times-Roman family
+    # Use built-in Times-Roman family (PyMuPDF alias 'tiro'). [web:15]
+    return "tiro"
 
 def draw_text_with_white_bg(page, point, text, fontname, fontsize, color):
     """
     Draw a white rectangle behind the text, then draw the text.
-    Uses a fixed-width white box for simplicity.
+    Uses a fixed-width white box; height tuned to avoid overlap between two lines. [web:57]
     """
     if not text:
         return
 
     x, y = point
-    box_width = 200  # increased for longer text
-    box_height = fontsize + 6
 
-    bg_rect = fitz.Rect(x - 2, y - fontsize, x - 2 + box_width, y - fontsize + box_height)
+    # Make box wider and higher to safely contain text
+    box_width = 260
+    box_height = fontsize * 1.6
+
+    # y is the text baseline; move rect up a bit and cover enough vertical space
+    bg_rect = fitz.Rect(
+        x - 2,
+        y - fontsize * 1.3,
+        x - 2 + box_width,
+        y - fontsize * 1.3 + box_height,
+    )
     page.draw_rect(bg_rect, color=(1, 1, 1), fill=(1, 1, 1), width=0)
 
     page.insert_text(
@@ -103,9 +108,8 @@ def draw_text_with_white_bg(page, point, text, fontname, fontsize, color):
 def update_pdf(pdf_bytes, entries, surveyor_name=None):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     base_offset_x = 40
-    base_offset_y = 10
     font_size = 14
-    line_spacing = 18  # vertical distance between line 1 and line 2
+    line_spacing = int(font_size * 1.6)  # safer vertical distance between line 1 and 2
 
     # ===== Surveyor Name: SECOND "Name" label =====
     if surveyor_name:
@@ -141,10 +145,6 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
         for inst in rects1 + rects2 + rects3:
             aperture_positions.append((page_num, inst))
 
-    if not aperture_positions:
-        print("No 'Aperture Size' anchors found in PDF.")
-        # still continue; nothing will be drawn
-
     # ===== Write each row =====
     for idx, entry in enumerate(entries):
         if idx >= len(aperture_positions):
@@ -154,11 +154,9 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
         page = doc[page_num]
         fontname = get_fontname_for_page(page)
 
-        # --- take EXACT values from editor for this row ---
         survey_w_raw = entry.get("width")
         survey_h_raw = entry.get("height")
 
-        # convert to float only if not None / not empty
         survey_w = safe_float_convert(survey_w_raw)
         survey_h = safe_float_convert(survey_h_raw)
 
@@ -176,19 +174,18 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
         if survey_w is not None and survey_h is not None:
             size_text = f"{survey_w:.0f} x {survey_h:.0f}"
         else:
-            size_text = ""  # no "N/A"
+            size_text = ""
 
         location_input = (entry.get("location_input") or "").strip()
         remarks_text = (entry.get("remarks") or "").strip()
 
         insert_x = inst.x1 + base_offset_x
-        insert_y = inst.y0 + base_offset_y
+        insert_y = inst.y0 + 10  # slightly below anchor
 
         # Line 1: "Location  :  Width x Height"
         if size_text:
             line1_text = f"{location_input} : {size_text}"
         else:
-            # if somehow size is missing, at least show location
             line1_text = location_input
 
         draw_text_with_white_bg(
@@ -200,7 +197,7 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
             color=color,
         )
 
-        # Line 2: remarks, if any
+        # Line 2: remarks ONLY if not empty
         if remarks_text:
             draw_text_with_white_bg(
                 page,
@@ -215,14 +212,13 @@ def update_pdf(pdf_bytes, entries, surveyor_name=None):
     doc.save(out_bytes)
     return out_bytes.getvalue()
 
-
 def make_excel_safe_name(name):
     return "".join(c if c.isalnum() else "_" for c in name)[:31] or "Sheet"
 
 def build_ref_summary(df):
     """Build reference summary for a single PDF: Ref | Order | Survey"""
     order_counts = df.groupby("reference", dropna=False).size().rename("Order")
-    
+
     survey_mask = df["width"].notna() & df["height"].notna()
     survey_counts = (
         df[survey_mask]
