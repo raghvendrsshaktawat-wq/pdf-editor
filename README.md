@@ -1,37 +1,371 @@
-Fenesta WCS Survey Editor
-A Streamlit web app for Fenesta surveyors to upload WCS PDF reports, edit survey dimensions, and generate overlaid PDFs.
+# ==========================
+# Fenesta WCS Survey Editor v4.0
+# ==========================
+import streamlit as st
+import fitz
+import pandas as pd
+import io
+import re
+from datetime import datetime
 
-Features
-Upload multiple Fenesta WCS PDFs at once
+st.set_page_config(page_title="Fenesta WCS Survey Editor", page_icon="🪟", layout="wide", initial_sidebar_state="collapsed")
 
-Auto-extracts all sales line items (Sales Line, Qty, Description, System, Order W/H, Reference, Location, Glazing)
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+html,body,[class*="css"]{font-family:'Inter',sans-serif}
+.stApp{background:#f8f6f2}
+.fen-header{background:linear-gradient(135deg,#1A1A2E 0%,#16213E 100%);padding:18px 32px;border-radius:16px;display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;box-shadow:0 4px 20px rgba(26,26,46,.18)}
+.brand{color:#F47920;font-size:22px;font-weight:800;letter-spacing:-.5px}
+.tagline{color:#94a3b8;font-size:13px;margin-top:2px}
+.badge{background:#F47920;color:white;border-radius:8px;padding:6px 14px;font-size:12px;font-weight:700}
+.metric-row{display:flex;gap:12px;margin:16px 0;flex-wrap:wrap}
+.metric-card{background:white;border-radius:12px;padding:14px 20px;flex:1;min-width:130px;box-shadow:0 2px 8px rgba(0,0,0,.06);border-left:4px solid #F47920}
+.metric-card.ok{border-left-color:#22c55e}.metric-card.warn{border-left-color:#f59e0b}.metric-card.danger{border-left-color:#ef4444}
+.mk{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#94a3b8}
+.mv{font-size:26px;font-weight:800;color:#1A1A2E;margin-top:2px}.ms{font-size:12px;color:#94a3b8}
+.section-title{font-size:15px;font-weight:700;color:#1A1A2E;border-left:4px solid #F47920;padding-left:10px;margin:20px 0 10px}
+.legend{display:flex;gap:16px;align-items:center;background:white;border-radius:10px;padding:10px 16px;box-shadow:0 1px 4px rgba(0,0,0,.06);margin-bottom:16px;flex-wrap:wrap}
+.legend-item{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500}
+.dot{width:12px;height:12px;border-radius:50%}
+.dot-ok{background:#22c55e}.dot-warn{background:#f59e0b}.dot-danger{background:#ef4444}.dot-empty{background:#cbd5e1}
+[data-testid="stFileUploader"]{background:white!important;border-radius:14px!important;padding:8px!important;box-shadow:0 2px 8px rgba(0,0,0,.06)!important}
+.stDownloadButton>button,.stButton>button{background:linear-gradient(135deg,#F47920,#e8671a)!important;color:white!important;border:none!important;border-radius:10px!important;font-weight:700!important;box-shadow:0 2px 8px rgba(244,121,32,.3)!important}
+[data-testid="stExpander"]{background:white!important;border-radius:14px!important;border:1px solid #e2e8f0!important;box-shadow:0 2px 8px rgba(0,0,0,.05)!important;margin-bottom:14px!important}
+</style>
+""", unsafe_allow_html=True)
 
-Excel-like editable grid for Survey W, Survey H, Room, Remarks
+st.markdown("""
+<div class="fen-header">
+  <div><div class="brand">🪟 Fenesta WCS Survey Editor</div>
+  <div class="tagline">Fenesta Building Systems · Survey Data Overlay Tool</div></div>
+  <div class="badge">v4.0</div>
+</div>
+""", unsafe_allow_html=True)
 
-Tolerance color coding: 🟢 ≤75mm · 🟡 76–200mm · 🔴 >200mm
+st.markdown("""
+<div class="legend">
+  <span style="font-size:13px;font-weight:600;color:#1A1A2E">Tolerance Guide:</span>
+  <span class="legend-item"><span class="dot dot-ok"></span> ≤75 mm — Within tolerance</span>
+  <span class="legend-item"><span class="dot dot-warn"></span> 76–200 mm — Review required</span>
+  <span class="legend-item"><span class="dot dot-danger"></span> &gt;200 mm — Critical — Re-survey</span>
+  <span class="legend-item"><span class="dot dot-empty"></span> Not surveyed yet</span>
+</div>
+""", unsafe_allow_html=True)
 
-Overlays survey data back onto the original WCS PDF
+# ══════════════════════════════════════
+# PARSER — built from actual PyMuPDF output
+# ══════════════════════════════════════
+@st.cache_data
+def parse_wcs_pdf(file_bytes):
+    doc = fitz.open(stream=file_bytes, filetype="pdf")
+    all_lines = []
+    for page in doc:
+        for ln in page.get_text("text").splitlines():
+            all_lines.append(ln)
+    return _parse(all_lines)
 
-Combined Excel export (all WCS in one file, one sheet per WCS)
+def _parse(all_lines):
+    lines = [l.rstrip() for l in all_lines]
 
-Fenesta brand UI (orange + navy)
+    # ── Meta ──
+    meta = {}
+    for ln in lines:
+        m = re.search(r'\b(W\d{7,})\b', ln)
+        if m and not meta.get('order_no'): meta['order_no'] = m.group(1)
+    # MSC comes out as scientific notation e.g. '9.001172026e+09'
+    for ln in lines:
+        m = re.match(r'^(9\.\d+e\+\d+)$', ln.strip())
+        if m:
+            try: meta['msc_no'] = str(int(float(m.group(1))))
+            except: pass
+            break
+    # Zone: ALLCAPS word whose previous line is a date
+    for i, ln in enumerate(lines):
+        if i > 0 and re.match(r'^\d+/\d+/\d+$', lines[i-1].strip()) and re.match(r'^[A-Z]{4,}$', ln.strip()):
+            meta['zone'] = ln.strip(); break
+    # Customer: ALLCAPS name after 'INDIA'
+    for i, ln in enumerate(lines):
+        if ln.strip() == 'INDIA' and i+1 < len(lines):
+            cand = lines[i+1].strip()
+            if re.match(r'^[A-Z][A-Z ]{2,}$', cand) and 'ZAHEERABAD' not in cand:
+                meta['customer'] = cand; break
 
-How to run locally
-bash
-pip install -r requirements.txt
-streamlit run app.py
-Deploy to Streamlit Cloud
-Push this repo to GitHub
+    # ── Sales line detection ──
+    # PyMuPDF extracts each PDF table cell as its own line.
+    # Structure per item:
+    #   <description>          text line (e.g. 'Bay 2 Facet', 'Casement L.Casement R', 'Fixed')
+    #   <prod_code>            optional 4-digit sub-code (e.g. '0203', '0100') — NOT the sales line
+    #   '0NNN'                 sales line — standalone 4-digit starting with 0
+    #   '1'                    qty (always next line)
+    #   'HHHH'                 order HEIGHT (3–4 digits) — comes BEFORE width
+    #   'WWWW'                 order WIDTH  (3–4 digits)
+    #   'SG/Louver ...'        glazing
+    #   'Aperture Size'
+    #   ... boilerplate ...
+    #   'Arch Height(mm)....'
+    #   '  REF'                reference (2-space indent)
+    #   '  LOC'                location
+    #   '  SYS text'           system name
 
-Go to share.streamlit.io
+    SKIP_DESC = re.compile(
+        r'^(RE Remarks|Customer Remarks|Configuration Changed|Remarks|Sales Line|'
+        r'Size \(w x h\)|Glazing|Description|Qty|^N$|^Y$|Cust\. Initials|'
+        r'Order No\.|Zone|Quote No\.|Date|MSC No\.|Print Date|Segment|Retail|'
+        r'Viewed from Inside|Window Position|Mechanical Join|Aperture Finish|'
+        r'Opening|Orientation|Grill|B/S|Sash Handle).*$', re.I)
 
-Click New app → select your repo → set app.py as the main file
+    BOILERPLATE_VALS = re.compile(
+        r'^(Foil 2S|Walnut|Feature|118mm|65mm|Fibre|^Yes$|Sleek|^Mechanical$|^Black$|'
+        r'^Plaster$|Easy Clean|^Brick$|^Center$|Luxury|Fixed New|A65)', re.I)
 
-Click Deploy
+    sales_line_re = re.compile(r'^0\d{3}$')
+    glazing_re    = re.compile(r'^(SG|DG|TG|Louver)\s*', re.I)
+    rows = []
 
-Files
-app.py — main Streamlit app
+    for i, raw in enumerate(lines):
+        ln = raw.strip()
+        if not sales_line_re.match(ln): continue
+        # Validate: next line must be '1' (qty)
+        if i+1 >= len(lines) or lines[i+1].strip() != '1': continue
+        # Next 2 lines: height then width
+        if i+3 >= len(lines): continue
+        h_str = lines[i+2].strip()
+        w_str = lines[i+3].strip()
+        if not (re.match(r'^\d{3,4}$', h_str) and re.match(r'^\d{3,4}$', w_str)): continue
 
-requirements.txt — Python dependencies
+        order_height = int(h_str)
+        order_width  = int(w_str)
 
-README.md — this file
+        # Glazing
+        glazing = ''
+        if i+4 < len(lines) and glazing_re.match(lines[i+4].strip()):
+            glazing = lines[i+4].strip()
+
+        # Description: walk back, skip prod codes & boilerplate
+        desc = ''
+        for back in range(i-1, max(i-6, -1), -1):
+            c = lines[back].strip()
+            if not c: continue
+            if re.match(r'^\d{2,4}$', c): continue  # skip 0203, 0100 etc
+            if SKIP_DESC.match(c): continue
+            desc = c
+            break
+
+        # Ref / Loc / Sys: find 'Arch Height(mm)....' after sales line, then read indented lines
+        ref = loc = sys = ''
+        arch_idx = None
+        for j in range(i+1, min(i+120, len(lines))):
+            if 'Arch Height(mm)' in lines[j]:
+                arch_idx = j; break
+
+        if arch_idx is not None:
+            cands = []
+            for j in range(arch_idx+1, min(arch_idx+12, len(lines))):
+                s = lines[j]
+                stripped = s.strip()
+                if not stripped: continue
+                if s.startswith('  ') and stripped:
+                    if BOILERPLATE_VALS.match(stripped): break
+                    cands.append(stripped)
+                else:
+                    break
+            if len(cands) >= 1: ref = cands[0]
+            if len(cands) >= 2: loc = cands[1]
+            if len(cands) >= 3: sys = cands[2]
+
+        rows.append({
+            'sales_line':    ln,
+            'description':   desc,
+            'system':        sys,
+            'order_width':   order_width,
+            'order_height':  order_height,
+            'reference':     ref,
+            'location':      loc,
+            'survey_width':  None,
+            'survey_height': None,
+            'room':          '',
+            'remarks':       ''
+        })
+
+    return meta, rows
+
+# ══════════════════════════════════════
+# TOLERANCE
+# ══════════════════════════════════════
+def get_tol(ov, sv):
+    if sv is None or pd.isna(sv): return 'empty'
+    d = abs(float(ov) - float(sv))
+    if d <= 75:  return 'ok'
+    if d <= 200: return 'warn'
+    return 'danger'
+
+def row_tol(ow, oh, sw, sh):
+    tw, th = get_tol(ow, sw), get_tol(oh, sh)
+    if 'empty'  in (tw, th): return 'empty'
+    if 'danger' in (tw, th): return 'danger'
+    if 'warn'   in (tw, th): return 'warn'
+    return 'ok'
+
+# ══════════════════════════════════════
+# PDF OVERLAY
+# ══════════════════════════════════════
+def overlay_pdf(pdf_bytes, rows_data, surveyor_name=""):
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    if surveyor_name:
+        for page in doc:
+            hits = page.search_for("Name")
+            if len(hits) >= 2:
+                r = hits[1]; tx, ty = r.x1+8, r.y1-2
+                page.draw_rect(fitz.Rect(tx-2, ty-12, tx+160, ty+4), color=(1,1,1), fill=(1,1,1), width=0)
+                page.insert_text((tx, ty), surveyor_name, fontsize=10, fontname="helv", color=(0,0,0))
+                break
+
+    anchors = []
+    for pn, page in enumerate(doc):
+        for inst in page.search_for("Aperture Size"):
+            anchors.append((pn, inst))
+
+    col_map = {'ok':(0.05,.6,.25), 'warn':(.8,.5,0), 'danger':(.85,.1,.1), 'empty':(.5,.5,.5)}
+    fs, gap = 10, 18
+
+    for idx, row in enumerate(rows_data):
+        if idx >= len(anchors): break
+        pn, anchor = anchors[idx]
+        page = doc[pn]
+        sw = row.get('survey_width'); sh = row.get('survey_height')
+        ow = row.get('order_width', 0); oh = row.get('order_height', 0)
+        room    = (row.get('room') or '').strip()
+        remarks = (row.get('remarks') or '').strip()
+        tol = row_tol(ow, oh, sw, sh); col = col_map[tol]
+        if sw is not None and sh is not None: size_txt = f"{int(sw)} x {int(sh)}"
+        elif sw is not None:                  size_txt = f"{int(sw)} x --"
+        elif sh is not None:                  size_txt = f"-- x {int(sh)}"
+        else:                                 size_txt = "Not surveyed"
+        line1 = f"{room} : {size_txt}" if room else size_txt
+        ix, iy = anchor.x1+30, anchor.y0+2
+
+        def write(x, y, txt, c):
+            bw, bh = 320, fs*1.65
+            rect = fitz.Rect(x-3, y-fs*1.25, x-3+bw, y-fs*1.25+bh)
+            page.draw_rect(rect, color=c, fill=None, width=1.5)
+            page.draw_rect(fitz.Rect(rect.x0+1.5, rect.y0+1.5, rect.x1-1.5, rect.y1-1.5),
+                           color=(1,1,1), fill=(1,1,1), width=0)
+            page.insert_text((x, y), txt[:60], fontsize=fs, fontname="helv", color=c)
+
+        write(ix, iy, line1, col)
+        if remarks: write(ix, iy+gap, remarks, col)
+
+    buf = io.BytesIO(); doc.save(buf); return buf.getvalue()
+
+# ══════════════════════════════════════
+# MAIN UI
+# ══════════════════════════════════════
+c1, c2, c3 = st.columns([3, 1, 1])
+with c1:
+    uploaded_pdfs = st.file_uploader("📎 Upload Fenesta WCS PDF Reports", type="pdf", accept_multiple_files=True)
+with c2:
+    lot_name = st.text_input("Lot / Project Name", placeholder="e.g. Zaheerabad Phase 1")
+with c3:
+    surveyor_global = st.text_input("Surveyor Name", placeholder="Surveyor name")
+
+if not uploaded_pdfs:
+    st.markdown("""
+    <div style="text-align:center;padding:60px 20px;background:white;border-radius:16px;border:2px dashed #e2e8f0;margin-top:20px">
+      <div style="font-size:48px">📄</div>
+      <div style="font-size:18px;font-weight:700;color:#1A1A2E;margin:12px 0 6px">Upload WCS PDF Reports to Begin</div>
+      <div style="color:#94a3b8;font-size:14px">Supports multiple Fenesta WCS PDFs · Auto-extracts all sales line items</div>
+    </div>""", unsafe_allow_html=True)
+    st.stop()
+
+all_file_data = []
+total_all = surveyed_all = ok_all = warn_all = danger_all = 0
+
+for i, pdf_file in enumerate(uploaded_pdfs, 1):
+    file_bytes = pdf_file.read()
+    with st.expander(f"📄  {pdf_file.name}", expanded=(i == 1)):
+        with st.spinner(f"Parsing {pdf_file.name}..."):
+            meta, rows = parse_wcs_pdf(file_bytes)
+
+        if not rows:
+            st.error("⚠ No sales line items detected. Ensure this is a text-based Fenesta WCS PDF.")
+            continue
+
+        hc1, hc2, hc3, hc4 = st.columns(4)
+        hc1.metric("Order No.", meta.get('order_no', '—'))
+        hc2.metric("MSC No.",   meta.get('msc_no',   '—'))
+        hc3.metric("Zone",      meta.get('zone',     '—'))
+        hc4.metric("Customer",  meta.get('customer', '—'))
+
+        df = pd.DataFrame(rows)
+        st.markdown('<div class="section-title">Line Item Editor</div>', unsafe_allow_html=True)
+
+        edited = st.data_editor(
+            df, num_rows="fixed", hide_index=True,
+            use_container_width=True, key=f"editor_{i}",
+            column_config={
+                "sales_line":    st.column_config.TextColumn("Sales Line",   disabled=True, width="small"),
+                "description":   st.column_config.TextColumn("Description",  disabled=True, width="medium"),
+                "system":        st.column_config.TextColumn("System",       disabled=True, width="large"),
+                "order_width":   st.column_config.NumberColumn("Order W",    disabled=True, width="small", format="%d mm"),
+                "order_height":  st.column_config.NumberColumn("Order H",    disabled=True, width="small", format="%d mm"),
+                "reference":     st.column_config.TextColumn("Reference",    disabled=True, width="small"),
+                "location":      st.column_config.TextColumn("Location",     disabled=True, width="small"),
+                "survey_width":  st.column_config.NumberColumn("Survey W ✎", width="small", step=1, format="%d mm"),
+                "survey_height": st.column_config.NumberColumn("Survey H ✎", width="small", step=1, format="%d mm"),
+                "room":          st.column_config.TextColumn("Room ✎",       width="medium"),
+                "remarks":       st.column_config.TextColumn("Remarks ✎",    width="large"),
+            }
+        )
+
+        tols = [row_tol(r['order_width'], r['order_height'], r['survey_width'], r['survey_height'])
+                for _, r in edited.iterrows()]
+        n_ok = tols.count('ok'); n_warn = tols.count('warn')
+        n_danger = tols.count('danger'); n_empty = tols.count('empty'); n_total = len(tols)
+        ok_all += n_ok; warn_all += n_warn; danger_all += n_danger
+        total_all += n_total; surveyed_all += n_ok + n_warn + n_danger
+
+        st.markdown(f"""
+        <div class="metric-row">
+          <div class="metric-card"><div class="mk">Total Items</div><div class="mv">{n_total}</div></div>
+          <div class="metric-card ok"><div class="mk">✅ Within Tolerance</div><div class="mv">{n_ok}</div><div class="ms">≤ 75 mm</div></div>
+          <div class="metric-card warn"><div class="mk">⚠️ Review Required</div><div class="mv">{n_warn}</div><div class="ms">76–200 mm</div></div>
+          <div class="metric-card danger"><div class="mk">🔴 Critical</div><div class="mv">{n_danger}</div><div class="ms">&gt; 200 mm</div></div>
+          <div class="metric-card"><div class="mk">Pending</div><div class="mv">{n_empty}</div><div class="ms">not filled</div></div>
+        </div>""", unsafe_allow_html=True)
+
+        overlaid = overlay_pdf(file_bytes, edited.to_dict('records'), surveyor_name=surveyor_global)
+        base = pdf_file.name.replace('.pdf', '')
+        out_name = f"{lot_name}_{base}.pdf" if lot_name else f"{base}_surveyed.pdf"
+        all_file_data.append((meta.get('order_no', base), edited))
+        st.download_button(f"⬇ Download {out_name}", data=overlaid,
+                           file_name=out_name, mime="application/pdf", key=f"dl_{i}")
+
+if all_file_data:
+    st.markdown("---")
+    st.markdown('<div class="section-title">📊 Overall Survey Progress</div>', unsafe_allow_html=True)
+    pct = round(surveyed_all / total_all * 100) if total_all else 0
+    st.markdown(f"""
+    <div class="metric-row">
+      <div class="metric-card"><div class="mk">All Line Items</div><div class="mv">{total_all}</div></div>
+      <div class="metric-card ok"><div class="mk">✅ Within Tolerance</div><div class="mv">{ok_all}</div></div>
+      <div class="metric-card warn"><div class="mk">⚠️ Review</div><div class="mv">{warn_all}</div></div>
+      <div class="metric-card danger"><div class="mk">🔴 Critical</div><div class="mv">{danger_all}</div></div>
+      <div class="metric-card"><div class="mk">Completion</div><div class="mv">{pct}%</div></div>
+    </div>""", unsafe_allow_html=True)
+    st.progress(pct / 100, text=f"Survey completion: {pct}%")
+
+    excel_buf = io.BytesIO()
+    with pd.ExcelWriter(excel_buf, engine="openpyxl") as writer:
+        for label, df_part in all_file_data:
+            safe = "".join(c if c.isalnum() else "_" for c in str(label))[:31] or "Sheet"
+            df_part.to_excel(writer, index=False, sheet_name=safe)
+    ts = datetime.now().strftime('%Y%m%d_%H%M')
+    xl_name = f"{lot_name}_{ts}.xlsx" if lot_name else f"WCS_Survey_{ts}.xlsx"
+    st.download_button("⬇ Download Combined Excel (All WCS)", data=excel_buf.getvalue(),
+                       file_name=xl_name,
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                       use_container_width=True)
+
+st.markdown("---")
+st.caption("🪟 Fenesta Building Systems · 🔴 >200mm Critical | 🟡 76–200mm Review | 🟢 ≤75mm OK")
