@@ -1,5 +1,5 @@
 # ==========================
-# Fenesta WCS Survey Editor v3.1
+# Fenesta WCS Survey Editor v4.0
 # ==========================
 import streamlit as st
 import fitz
@@ -37,8 +37,9 @@ html,body,[class*="css"]{font-family:'Inter',sans-serif}
 
 st.markdown("""
 <div class="fen-header">
-  <div><div class="brand">🪟 Fenesta WCS Survey Editor</div><div class="tagline">Fenesta Building Systems · Survey Data Overlay Tool</div></div>
-  <div class="badge">v3.1</div>
+  <div><div class="brand">🪟 Fenesta WCS Survey Editor</div>
+  <div class="tagline">Fenesta Building Systems · Survey Data Overlay Tool</div></div>
+  <div class="badge">v4.0</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -53,103 +54,132 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ══════════════════════════════════════
-# PARSER
+# PARSER — built from actual PyMuPDF output
 # ══════════════════════════════════════
 @st.cache_data
 def parse_wcs_pdf(file_bytes):
     doc = fitz.open(stream=file_bytes, filetype="pdf")
-    full_text = ""
+    all_lines = []
     for page in doc:
-        full_text += page.get_text("text") + "\n"
-    return parse_wcs_lines(full_text)
+        for ln in page.get_text("text").splitlines():
+            all_lines.append(ln)
+    return _parse(all_lines)
 
-def parse_wcs_lines(full_text):
-    lines = [l.rstrip() for l in full_text.splitlines()]
+def _parse(all_lines):
+    lines = [l.rstrip() for l in all_lines]
 
     # ── Meta ──
     meta = {}
     for ln in lines:
         m = re.search(r'\b(W\d{7,})\b', ln)
         if m and not meta.get('order_no'): meta['order_no'] = m.group(1)
+    # MSC comes out as scientific notation e.g. '9.001172026e+09'
     for ln in lines:
-        m = re.search(r'\b(9\d{9})\b', ln)
-        if m and 'Tel' not in ln: meta['msc_no'] = m.group(1); break
-    m = re.search(r'\d{10}\s+[\d/]+\s+([A-Z]{4,})\s+\w+', full_text)
-    if m: meta['zone'] = m.group(1)
-    m = re.search(r'INDIA\n([A-Z][A-Z ]+)\n', full_text)
-    if m: meta['customer'] = m.group(1).strip()
+        m = re.match(r'^(9\.\d+e\+\d+)$', ln.strip())
+        if m:
+            try: meta['msc_no'] = str(int(float(m.group(1))))
+            except: pass
+            break
+    # Zone: ALLCAPS word whose previous line is a date
+    for i, ln in enumerate(lines):
+        if i > 0 and re.match(r'^\d+/\d+/\d+$', lines[i-1].strip()) and re.match(r'^[A-Z]{4,}$', ln.strip()):
+            meta['zone'] = ln.strip(); break
+    # Customer: ALLCAPS name after 'INDIA'
+    for i, ln in enumerate(lines):
+        if ln.strip() == 'INDIA' and i+1 < len(lines):
+            cand = lines[i+1].strip()
+            if re.match(r'^[A-Z][A-Z ]{2,}$', cand) and 'ZAHEERABAD' not in cand:
+                meta['customer'] = cand; break
 
-    # ── Sales line patterns ──
-    # Pattern A: 0NNN 1 <text description> WIDTH HEIGHT GLAZING
-    patA = re.compile(r'^(0\d{3})\s+1\s+([A-Za-z].+?)\s+(\d{3,4})\s+(\d{3,4})\s+((?:SG|DG|TG|Louver)[\w\s_]+?)\s*$')
-    # Pattern B: 0NNN 1 WIDTH HEIGHT GLAZING (description on previous lines)
-    patB = re.compile(r'^(0\d{3})\s+1\s+(\d{3,4})\s+(\d{3,4})\s+((?:SG|DG|TG|Louver)[\w\s_]+?)\s*$')
+    # ── Sales line detection ──
+    # PyMuPDF extracts each PDF table cell as its own line.
+    # Structure per item:
+    #   <description>          text line (e.g. 'Bay 2 Facet', 'Casement L.Casement R', 'Fixed')
+    #   <prod_code>            optional 4-digit sub-code (e.g. '0203', '0100') — NOT the sales line
+    #   '0NNN'                 sales line — standalone 4-digit starting with 0
+    #   '1'                    qty (always next line)
+    #   'HHHH'                 order HEIGHT (3–4 digits) — comes BEFORE width
+    #   'WWWW'                 order WIDTH  (3–4 digits)
+    #   'SG/Louver ...'        glazing
+    #   'Aperture Size'
+    #   ... boilerplate ...
+    #   'Arch Height(mm)....'
+    #   '  REF'                reference (2-space indent)
+    #   '  LOC'                location
+    #   '  SYS text'           system name
 
-    sl_hits = []
-    for i, raw_ln in enumerate(lines):
-        ln = raw_ln.strip()
-        mA = patA.match(ln)
-        mB = patB.match(ln)
-        if mA:
-            sl_hits.append({'line_idx': i, 'sales_line': mA.group(1),
-                            'inline_desc': mA.group(2).strip(),
-                            'order_width': int(mA.group(3)), 'order_height': int(mA.group(4)),
-                            'glazing': mA.group(5).strip()})
-        elif mB:
-            sl_hits.append({'line_idx': i, 'sales_line': mB.group(1),
-                            'inline_desc': None,
-                            'order_width': int(mB.group(2)), 'order_height': int(mB.group(3)),
-                            'glazing': mB.group(4).strip()})
+    SKIP_DESC = re.compile(
+        r'^(RE Remarks|Customer Remarks|Configuration Changed|Remarks|Sales Line|'
+        r'Size \(w x h\)|Glazing|Description|Qty|^N$|^Y$|Cust\. Initials|'
+        r'Order No\.|Zone|Quote No\.|Date|MSC No\.|Print Date|Segment|Retail|'
+        r'Viewed from Inside|Window Position|Mechanical Join|Aperture Finish|'
+        r'Opening|Orientation|Grill|B/S|Sash Handle).*$', re.I)
 
-    SKIP = re.compile(r'^(RE Remarks|Customer Remarks|Configuration Changed|Remarks|Sales Line|'
-                      r'Order No\.|SURVEY CHECKLIST|INSTALLATION).*$', re.I)
+    BOILERPLATE_VALS = re.compile(
+        r'^(Foil 2S|Walnut|Feature|118mm|65mm|Fibre|^Yes$|Sleek|^Mechanical$|^Black$|'
+        r'^Plaster$|Easy Clean|^Brick$|^Center$|Luxury|Fixed New|A65)', re.I)
 
+    sales_line_re = re.compile(r'^0\d{3}$')
+    glazing_re    = re.compile(r'^(SG|DG|TG|Louver)\s*', re.I)
     rows = []
-    for hit in sl_hits:
-        i = hit['line_idx']
 
-        # ── Description ──
-        if hit['inline_desc']:
-            description = hit['inline_desc']
-        else:
-            desc = ''
-            for back in range(i - 1, max(i - 8, 0), -1):
-                candidate = lines[back].strip()
-                if not candidate: continue
-                if re.match(r'^\d{2,4}$', candidate): continue
-                if SKIP.match(candidate): continue
-                desc = candidate
-                break
-            description = desc
+    for i, raw in enumerate(lines):
+        ln = raw.strip()
+        if not sales_line_re.match(ln): continue
+        # Validate: next line must be '1' (qty)
+        if i+1 >= len(lines) or lines[i+1].strip() != '1': continue
+        # Next 2 lines: height then width
+        if i+3 >= len(lines): continue
+        h_str = lines[i+2].strip()
+        w_str = lines[i+3].strip()
+        if not (re.match(r'^\d{3,4}$', h_str) and re.match(r'^\d{3,4}$', w_str)): continue
 
-        # ── Reference / Location / System ──
+        order_height = int(h_str)
+        order_width  = int(w_str)
+
+        # Glazing
+        glazing = ''
+        if i+4 < len(lines) and glazing_re.match(lines[i+4].strip()):
+            glazing = lines[i+4].strip()
+
+        # Description: walk back, skip prod codes & boilerplate
+        desc = ''
+        for back in range(i-1, max(i-6, -1), -1):
+            c = lines[back].strip()
+            if not c: continue
+            if re.match(r'^\d{2,4}$', c): continue  # skip 0203, 0100 etc
+            if SKIP_DESC.match(c): continue
+            desc = c
+            break
+
+        # Ref / Loc / Sys: find 'Arch Height(mm)....' after sales line, then read indented lines
         ref = loc = sys = ''
         arch_idx = None
-        for j in range(i + 1, min(i + 90, len(lines))):
+        for j in range(i+1, min(i+120, len(lines))):
             if 'Arch Height(mm)' in lines[j]:
-                arch_idx = j
-                break
+                arch_idx = j; break
 
         if arch_idx is not None:
-            candidates = []
-            stop_words = re.compile(
-                r'^(Reference|Location|System|Colour|Foil|Corner|Frame|Sash|Bug|Handle|'
-                r'Aperture|Hinge|Masonry|CW |BS |T-Join|Louver|Facet|Coupling)', re.I)
-            for j in range(arch_idx + 1, min(arch_idx + 20, len(lines))):
-                stripped = lines[j].strip()
+            cands = []
+            for j in range(arch_idx+1, min(arch_idx+12, len(lines))):
+                s = lines[j]
+                stripped = s.strip()
                 if not stripped: continue
-                if stop_words.match(stripped): break
-                candidates.append(stripped)
-            if len(candidates) >= 1: ref = candidates[0]
-            if len(candidates) >= 2: loc = candidates[1]
-            if len(candidates) >= 3: sys = candidates[2]
+                if s.startswith('  ') and stripped:
+                    if BOILERPLATE_VALS.match(stripped): break
+                    cands.append(stripped)
+                else:
+                    break
+            if len(cands) >= 1: ref = cands[0]
+            if len(cands) >= 2: loc = cands[1]
+            if len(cands) >= 3: sys = cands[2]
 
         rows.append({
-            'sales_line':    hit['sales_line'],
-            'description':   description,
+            'sales_line':    ln,
+            'description':   desc,
             'system':        sys,
-            'order_width':   hit['order_width'],
-            'order_height':  hit['order_height'],
+            'order_width':   order_width,
+            'order_height':  order_height,
             'reference':     ref,
             'location':      loc,
             'survey_width':  None,
@@ -163,15 +193,15 @@ def parse_wcs_lines(full_text):
 # ══════════════════════════════════════
 # TOLERANCE
 # ══════════════════════════════════════
-def get_tol(order_val, survey_val):
-    if survey_val is None or pd.isna(survey_val): return 'empty'
-    diff = abs(float(order_val) - float(survey_val))
-    if diff <= 75:  return 'ok'
-    if diff <= 200: return 'warn'
+def get_tol(ov, sv):
+    if sv is None or pd.isna(sv): return 'empty'
+    d = abs(float(ov) - float(sv))
+    if d <= 75:  return 'ok'
+    if d <= 200: return 'warn'
     return 'danger'
 
 def row_tol(ow, oh, sw, sh):
-    tw = get_tol(ow, sw); th = get_tol(oh, sh)
+    tw, th = get_tol(ow, sw), get_tol(oh, sh)
     if 'empty'  in (tw, th): return 'empty'
     if 'danger' in (tw, th): return 'danger'
     if 'warn'   in (tw, th): return 'warn'
@@ -182,12 +212,11 @@ def row_tol(ow, oh, sw, sh):
 # ══════════════════════════════════════
 def overlay_pdf(pdf_bytes, rows_data, surveyor_name=""):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-
     if surveyor_name:
         for page in doc:
             hits = page.search_for("Name")
             if len(hits) >= 2:
-                r = hits[1]; tx, ty = r.x1 + 8, r.y1 - 2
+                r = hits[1]; tx, ty = r.x1+8, r.y1-2
                 page.draw_rect(fitz.Rect(tx-2, ty-12, tx+160, ty+4), color=(1,1,1), fill=(1,1,1), width=0)
                 page.insert_text((tx, ty), surveyor_name, fontsize=10, fontname="helv", color=(0,0,0))
                 break
@@ -208,19 +237,16 @@ def overlay_pdf(pdf_bytes, rows_data, surveyor_name=""):
         ow = row.get('order_width', 0); oh = row.get('order_height', 0)
         room    = (row.get('room') or '').strip()
         remarks = (row.get('remarks') or '').strip()
-        tol = row_tol(ow, oh, sw, sh)
-        col = col_map[tol]
-
-        if sw is not None and sh is not None:   size_txt = f"{int(sw)} x {int(sh)}"
-        elif sw is not None:                    size_txt = f"{int(sw)} x --"
-        elif sh is not None:                    size_txt = f"-- x {int(sh)}"
-        else:                                   size_txt = "Not surveyed"
-
+        tol = row_tol(ow, oh, sw, sh); col = col_map[tol]
+        if sw is not None and sh is not None: size_txt = f"{int(sw)} x {int(sh)}"
+        elif sw is not None:                  size_txt = f"{int(sw)} x --"
+        elif sh is not None:                  size_txt = f"-- x {int(sh)}"
+        else:                                 size_txt = "Not surveyed"
         line1 = f"{room} : {size_txt}" if room else size_txt
-        ix, iy = anchor.x1 + 30, anchor.y0 + 2
+        ix, iy = anchor.x1+30, anchor.y0+2
 
         def write(x, y, txt, c):
-            bw, bh = 320, fs * 1.65
+            bw, bh = 320, fs*1.65
             rect = fitz.Rect(x-3, y-fs*1.25, x-3+bw, y-fs*1.25+bh)
             page.draw_rect(rect, color=c, fill=None, width=1.5)
             page.draw_rect(fitz.Rect(rect.x0+1.5, rect.y0+1.5, rect.x1-1.5, rect.y1-1.5),
@@ -228,11 +254,9 @@ def overlay_pdf(pdf_bytes, rows_data, surveyor_name=""):
             page.insert_text((x, y), txt[:60], fontsize=fs, fontname="helv", color=c)
 
         write(ix, iy, line1, col)
-        if remarks: write(ix, iy + gap, remarks, col)
+        if remarks: write(ix, iy+gap, remarks, col)
 
-    buf = io.BytesIO()
-    doc.save(buf)
-    return buf.getvalue()
+    buf = io.BytesIO(); doc.save(buf); return buf.getvalue()
 
 # ══════════════════════════════════════
 # MAIN UI
@@ -247,13 +271,10 @@ with c3:
 
 if not uploaded_pdfs:
     st.markdown("""
-    <div style="text-align:center;padding:60px 20px;background:white;border-radius:16px;
-                border:2px dashed #e2e8f0;margin-top:20px">
+    <div style="text-align:center;padding:60px 20px;background:white;border-radius:16px;border:2px dashed #e2e8f0;margin-top:20px">
       <div style="font-size:48px">📄</div>
-      <div style="font-size:18px;font-weight:700;color:#1A1A2E;margin:12px 0 6px">
-        Upload WCS PDF Reports to Begin</div>
-      <div style="color:#94a3b8;font-size:14px">
-        Supports multiple Fenesta WCS PDFs · Auto-extracts all sales line items</div>
+      <div style="font-size:18px;font-weight:700;color:#1A1A2E;margin:12px 0 6px">Upload WCS PDF Reports to Begin</div>
+      <div style="color:#94a3b8;font-size:14px">Supports multiple Fenesta WCS PDFs · Auto-extracts all sales line items</div>
     </div>""", unsafe_allow_html=True)
     st.stop()
 
@@ -267,7 +288,7 @@ for i, pdf_file in enumerate(uploaded_pdfs, 1):
             meta, rows = parse_wcs_pdf(file_bytes)
 
         if not rows:
-            st.error("⚠ No sales line items detected in this WCS PDF.")
+            st.error("⚠ No sales line items detected. Ensure this is a text-based Fenesta WCS PDF.")
             continue
 
         hc1, hc2, hc3, hc4 = st.columns(4)
@@ -300,8 +321,7 @@ for i, pdf_file in enumerate(uploaded_pdfs, 1):
         tols = [row_tol(r['order_width'], r['order_height'], r['survey_width'], r['survey_height'])
                 for _, r in edited.iterrows()]
         n_ok = tols.count('ok'); n_warn = tols.count('warn')
-        n_danger = tols.count('danger'); n_empty = tols.count('empty')
-        n_total = len(tols)
+        n_danger = tols.count('danger'); n_empty = tols.count('empty'); n_total = len(tols)
         ok_all += n_ok; warn_all += n_warn; danger_all += n_danger
         total_all += n_total; surveyed_all += n_ok + n_warn + n_danger
 
@@ -318,7 +338,6 @@ for i, pdf_file in enumerate(uploaded_pdfs, 1):
         base = pdf_file.name.replace('.pdf', '')
         out_name = f"{lot_name}_{base}.pdf" if lot_name else f"{base}_surveyed.pdf"
         all_file_data.append((meta.get('order_no', base), edited))
-
         st.download_button(f"⬇ Download {out_name}", data=overlaid,
                            file_name=out_name, mime="application/pdf", key=f"dl_{i}")
 
