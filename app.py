@@ -1,5 +1,5 @@
 # ==========================
-# Fenesta WCS Survey Editor v4.1
+# Fenesta WCS Survey Editor v4.2
 # ==========================
 import streamlit as st
 import fitz
@@ -14,38 +14,81 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 html,body,[class*="css"]{font-family:'Inter',sans-serif}
-.stApp{background:#f8f6f2}
-.fen-header{background:linear-gradient(135deg,#1A1A2E 0%,#16213E 100%);padding:18px 32px;border-radius:16px;display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;box-shadow:0 4px 20px rgba(26,26,46,.18)}
-.brand{color:#F47920;font-size:22px;font-weight:800;letter-spacing:-.5px}
-.tagline{color:#94a3b8;font-size:13px;margin-top:2px}
-.badge{background:#F47920;color:white;border-radius:8px;padding:6px 14px;font-size:12px;font-weight:700}
+.stApp{background:#f0f4f9}
+
+/* ── Header ── */
+.fen-header{
+  background:linear-gradient(135deg,#005BAC 0%,#0047a0 100%);
+  padding:18px 32px;border-radius:16px;
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:24px;box-shadow:0 4px 20px rgba(0,91,172,.25)}
+.brand{color:#ffffff;font-size:24px;font-weight:800;letter-spacing:-.5px}
+.brand span{color:#E8212E}
+.tagline{color:#a8c8f0;font-size:13px;margin-top:3px}
+.badge{background:#E8212E;color:white;border-radius:8px;padding:6px 14px;font-size:12px;font-weight:700}
+
+/* ── Metric cards ── */
 .metric-row{display:flex;gap:12px;margin:16px 0;flex-wrap:wrap}
-.metric-card{background:white;border-radius:12px;padding:14px 20px;flex:1;min-width:130px;box-shadow:0 2px 8px rgba(0,0,0,.06);border-left:4px solid #F47920}
-.metric-card.ok{border-left-color:#22c55e}.metric-card.warn{border-left-color:#f59e0b}.metric-card.danger{border-left-color:#ef4444}
+.metric-card{background:white;border-radius:12px;padding:14px 20px;flex:1;min-width:130px;
+  box-shadow:0 2px 8px rgba(0,91,172,.08);border-left:4px solid #005BAC}
+.metric-card.ok    {border-left-color:#22c55e}
+.metric-card.warn  {border-left-color:#f59e0b}
+.metric-card.danger{border-left-color:#E8212E}
 .mk{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#94a3b8}
-.mv{font-size:26px;font-weight:800;color:#1A1A2E;margin-top:2px}.ms{font-size:12px;color:#94a3b8}
-.section-title{font-size:15px;font-weight:700;color:#1A1A2E;border-left:4px solid #F47920;padding-left:10px;margin:20px 0 10px}
-.legend{display:flex;gap:16px;align-items:center;background:white;border-radius:10px;padding:10px 16px;box-shadow:0 1px 4px rgba(0,0,0,.06);margin-bottom:16px;flex-wrap:wrap}
+.mv{font-size:26px;font-weight:800;color:#005BAC;margin-top:2px}
+.ms{font-size:12px;color:#94a3b8}
+
+/* ── Section title ── */
+.section-title{font-size:15px;font-weight:700;color:#005BAC;
+  border-left:4px solid #E8212E;padding-left:10px;margin:20px 0 10px}
+
+/* ── Legend ── */
+.legend{display:flex;gap:16px;align-items:center;background:white;border-radius:10px;
+  padding:10px 16px;box-shadow:0 1px 4px rgba(0,91,172,.08);margin-bottom:16px;flex-wrap:wrap}
 .legend-item{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500}
 .dot{width:12px;height:12px;border-radius:50%}
-.dot-ok{background:#22c55e}.dot-warn{background:#f59e0b}.dot-danger{background:#ef4444}.dot-empty{background:#cbd5e1}
-[data-testid="stFileUploader"]{background:white!important;border-radius:14px!important;padding:8px!important;box-shadow:0 2px 8px rgba(0,0,0,.06)!important}
-.stDownloadButton>button,.stButton>button{background:linear-gradient(135deg,#F47920,#e8671a)!important;color:white!important;border:none!important;border-radius:10px!important;font-weight:700!important;box-shadow:0 2px 8px rgba(244,121,32,.3)!important}
-[data-testid="stExpander"]{background:white!important;border-radius:14px!important;border:1px solid #e2e8f0!important;box-shadow:0 2px 8px rgba(0,0,0,.05)!important;margin-bottom:14px!important}
+.dot-ok    {background:#22c55e}
+.dot-warn  {background:#f59e0b}
+.dot-danger{background:#E8212E}
+.dot-empty {background:#cbd5e1}
+
+/* ── File uploader ── */
+[data-testid="stFileUploader"]{background:white!important;border-radius:14px!important;
+  padding:8px!important;box-shadow:0 2px 8px rgba(0,91,172,.08)!important}
+
+/* ── Buttons ── */
+.stDownloadButton>button,.stButton>button{
+  background:linear-gradient(135deg,#005BAC,#0047a0)!important;
+  color:white!important;border:none!important;border-radius:10px!important;
+  font-weight:700!important;box-shadow:0 2px 8px rgba(0,91,172,.3)!important;
+  transition:all .2s!important}
+.stDownloadButton>button:hover,.stButton>button:hover{
+  transform:translateY(-1px)!important;
+  box-shadow:0 4px 14px rgba(0,91,172,.4)!important}
+
+/* ── Expander ── */
+[data-testid="stExpander"]{background:white!important;border-radius:14px!important;
+  border:1px solid #dde8f5!important;box-shadow:0 2px 8px rgba(0,91,172,.06)!important;
+  margin-bottom:14px!important}
+
+/* ── Metric value color override ── */
+[data-testid="stMetricValue"]{color:#005BAC!important;font-weight:800!important}
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown("""
 <div class="fen-header">
-  <div><div class="brand">🪟 Fenesta WCS Survey Editor</div>
-  <div class="tagline">Fenesta Building Systems · Survey Data Overlay Tool</div></div>
-  <div class="badge">v4.1</div>
+  <div>
+    <div class="brand">🪟 Fenesta <span>WCS</span> Survey Editor</div>
+    <div class="tagline">Fenesta Building Systems · Better by Design · Survey Data Overlay Tool</div>
+  </div>
+  <div class="badge">v4.2</div>
 </div>
 """, unsafe_allow_html=True)
 
 st.markdown("""
 <div class="legend">
-  <span style="font-size:13px;font-weight:600;color:#1A1A2E">Tolerance Guide:</span>
+  <span style="font-size:13px;font-weight:600;color:#005BAC">Tolerance Guide:</span>
   <span class="legend-item"><span class="dot dot-ok"></span> ≤75 mm — Within tolerance</span>
   <span class="legend-item"><span class="dot dot-warn"></span> 76–200 mm — Review required</span>
   <span class="legend-item"><span class="dot dot-danger"></span> &gt;200 mm — Critical — Re-survey</span>
@@ -68,7 +111,6 @@ def parse_wcs_pdf(file_bytes):
 def _parse(all_lines):
     lines = [l.rstrip() for l in all_lines]
 
-    # ── Meta ──
     meta = {}
     for ln in lines:
         m = re.search(r'\b(W\d{7,})\b', ln)
@@ -87,23 +129,6 @@ def _parse(all_lines):
             cand = lines[i+1].strip()
             if re.match(r'^[A-Z][A-Z ]{2,}$', cand) and 'ZAHEERABAD' not in cand:
                 meta['customer'] = cand; break
-
-    # ── Sales line detection ──
-    # PyMuPDF extracts each PDF table cell as its OWN line.
-    # Per sales line block the lines appear in this order:
-    #   <description>   e.g. 'Bay 2 Facet', 'Casement L.Casement R', 'Fixed'
-    #   <prod_code>     optional 4-digit e.g. '0203', '0100'
-    #   '0NNN'          sales line number (standalone)
-    #   '1'             qty
-    #   'HHHH'          order HEIGHT (3-4 digits) — comes BEFORE width
-    #   'WWWW'          order WIDTH  (3-4 digits)
-    #   'SG/Louver...'  glazing
-    #   'Aperture Size'
-    #   ...boilerplate...
-    #   'Arch Height(mm)....'
-    #   '  REF'         2-space indented = Reference
-    #   '  LOC'         Location
-    #   '  SYS...'      System
 
     SKIP_DESC = re.compile(
         r'^(RE Remarks|Customer Remarks|Configuration Changed|Remarks|Sales Line|'
@@ -142,8 +167,7 @@ def _parse(all_lines):
             if not c: continue
             if re.match(r'^\d{2,4}$', c): continue
             if SKIP_DESC.match(c): continue
-            desc = c
-            break
+            desc = c; break
 
         ref = loc = sys = ''
         arch_idx = None
@@ -154,14 +178,12 @@ def _parse(all_lines):
         if arch_idx is not None:
             cands = []
             for j in range(arch_idx+1, min(arch_idx+12, len(lines))):
-                s = lines[j]
-                stripped = s.strip()
+                s = lines[j]; stripped = s.strip()
                 if not stripped: continue
                 if s.startswith('  ') and stripped:
                     if BOILERPLATE_VALS.match(stripped): break
                     cands.append(stripped)
-                else:
-                    break
+                else: break
             if len(cands) >= 1: ref = cands[0]
             if len(cands) >= 2: loc = cands[1]
             if len(cands) >= 3: sys = cands[2]
@@ -201,12 +223,10 @@ def row_tol(ow, oh, sw, sh):
 
 # ══════════════════════════════════════
 # PDF OVERLAY — pixel-perfect cell alignment
-# Measured from actual Fenesta WCS PDF drawing paths:
-#   Cell X: 78.25 → 459.65 (constant on all pages)
-#   Row Y: bracketed by the two horizontal grid lines around "Aperture Size"
+# Cell X: 78.25 → 459.65 (measured from actual WCS PDF drawing paths)
 # ══════════════════════════════════════
-CELL_X0 = 78.25
-CELL_X1 = 459.65
+CELL_X0  = 78.25
+CELL_X1  = 459.65
 CELL_PAD = 4.0
 
 def overlay_pdf(pdf_bytes, rows_data, surveyor_name=""):
@@ -221,10 +241,13 @@ def overlay_pdf(pdf_bytes, rows_data, surveyor_name=""):
                 page.insert_text((tx, ty), surveyor_name, fontsize=10, fontname="helv", color=(0,0,0))
                 break
 
-    col_map = {'ok':(0.05,.6,.25), 'warn':(.8,.5,0), 'danger':(.85,.1,.1), 'empty':(.4,.4,.4)}
+    col_map = {
+        'ok':     (0.0, 0.6, 0.2),
+        'warn':   (0.8, 0.5, 0.0),
+        'danger': (0.91, 0.13, 0.18),   # Fenesta Red #E8212E
+        'empty':  (0.0, 0.36, 0.67)     # Fenesta Blue #005BAC
+    }
 
-    # Build precise cell list by finding horizontal grid lines
-    # bracketing each "Aperture Size" text anchor
     cell_list = []
     for pn in range(len(doc)):
         pg = doc[pn]
@@ -240,7 +263,7 @@ def overlay_pdf(pdf_bytes, rows_data, surveyor_name=""):
             above = [r for r in h_lines if r.y1 <= hit.y0 + 2]
             below = [r for r in h_lines if r.y0 >= hit.y1 - 2]
             top_y = above[-1].y0 if above else hit.y0 - 13
-            bot_y = below[0].y0 if below else hit.y1 + 3
+            bot_y = below[0].y0  if below  else hit.y1 + 3
             cell_list.append((pn, top_y, bot_y))
 
     for idx, row in enumerate(rows_data):
@@ -248,9 +271,9 @@ def overlay_pdf(pdf_bytes, rows_data, surveyor_name=""):
         pn, top_y, bot_y = cell_list[idx]
         page = doc[pn]
 
-        sw = row.get('survey_width');  sh = row.get('survey_height')
+        sw = row.get('survey_width');   sh = row.get('survey_height')
         ow = row.get('order_width', 0); oh = row.get('order_height', 0)
-        room    = (row.get('room') or '').strip()
+        room    = (row.get('room')    or '').strip()
         remarks = (row.get('remarks') or '').strip()
         tol = row_tol(ow, oh, sw, sh)
         col = col_map[tol]
@@ -260,28 +283,23 @@ def overlay_pdf(pdf_bytes, rows_data, surveyor_name=""):
         elif sh is not None:                  size_txt = f"-- x {int(sh)}"
         else:                                 size_txt = "Not surveyed"
 
-        line1  = f"{room} : {size_txt}" if room else size_txt
-        row_h  = bot_y - top_y
-        fs     = min(9.0, row_h * 0.62)
+        line1 = f"{room} : {size_txt}" if room else size_txt
+        row_h = bot_y - top_y
+        fs    = min(9.0, row_h * 0.62)
 
         # ── Aperture Size row ──
-        cell = fitz.Rect(CELL_X0 + 0.5, top_y + 0.5, CELL_X1 - 0.5, bot_y - 0.5)
-        page.draw_rect(cell, color=col, fill=(1, 1, 1), width=1.5)
-        page.insert_text(
-            (CELL_X0 + CELL_PAD, top_y + row_h * 0.73),
-            line1[:72], fontsize=fs, fontname="helv", color=col
-        )
+        cell = fitz.Rect(CELL_X0+0.5, top_y+0.5, CELL_X1-0.5, bot_y-0.5)
+        page.draw_rect(cell, color=col, fill=(1,1,1), width=1.5)
+        page.insert_text((CELL_X0+CELL_PAD, top_y+row_h*0.73),
+                         line1[:72], fontsize=fs, fontname="helv", color=col)
 
         # ── Production Size row — remarks ──
         if remarks:
-            prod_top = bot_y
-            prod_bot = bot_y + row_h
-            prod_cell = fitz.Rect(CELL_X0 + 0.5, prod_top + 0.5, CELL_X1 - 0.5, prod_bot - 0.5)
-            page.draw_rect(prod_cell, color=col, fill=(1, 1, 1), width=1.5)
-            page.insert_text(
-                (CELL_X0 + CELL_PAD, prod_top + row_h * 0.73),
-                remarks[:72], fontsize=fs, fontname="helv", color=col
-            )
+            pt = bot_y; pb = bot_y + row_h
+            pc = fitz.Rect(CELL_X0+0.5, pt+0.5, CELL_X1-0.5, pb-0.5)
+            page.draw_rect(pc, color=col, fill=(1,1,1), width=1.5)
+            page.insert_text((CELL_X0+CELL_PAD, pt+row_h*0.73),
+                             remarks[:72], fontsize=fs, fontname="helv", color=col)
 
     buf = io.BytesIO()
     doc.save(buf)
@@ -301,9 +319,9 @@ with c3:
 if not uploaded_pdfs:
     st.markdown("""
     <div style="text-align:center;padding:60px 20px;background:white;border-radius:16px;
-                border:2px dashed #e2e8f0;margin-top:20px">
+                border:2px dashed #dde8f5;margin-top:20px">
       <div style="font-size:48px">📄</div>
-      <div style="font-size:18px;font-weight:700;color:#1A1A2E;margin:12px 0 6px">
+      <div style="font-size:18px;font-weight:700;color:#005BAC;margin:12px 0 6px">
         Upload WCS PDF Reports to Begin</div>
       <div style="color:#94a3b8;font-size:14px">
         Supports multiple Fenesta WCS PDFs · Auto-extracts all sales line items</div>
@@ -401,4 +419,4 @@ if all_file_data:
                        use_container_width=True)
 
 st.markdown("---")
-st.caption("🪟 Fenesta Building Systems · 🔴 >200mm Critical | 🟡 76–200mm Review | 🟢 ≤75mm OK")
+st.caption("🪟 Fenesta Building Systems · Better by Design · 🔴 >200mm Critical | 🟡 76–200mm Review | 🟢 ≤75mm OK")
