@@ -236,7 +236,7 @@ def overlay_pdf(pdf_bytes, rows_data, surveyor_name=""):
         for page in doc:
             hits = page.search_for("Name")
             if len(hits) >= 2:
-                r = hits[1]; tx, ty = r.x1+8, r.y1-2
+                r = hits[1]; tx, ty = r.x1+40, r.y1-2
                 page.draw_rect(fitz.Rect(tx-2, ty-12, tx+160, ty+4), color=(1,1,1), fill=(1,1,1), width=0)
                 page.insert_text((tx, ty), surveyor_name, fontsize=10, fontname="helv", color=(0,0,0))
                 break
